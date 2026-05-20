@@ -8,6 +8,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
+  const [entries, setEntries] = useState<any[]>([]);
 
   useEffect(() => {
     async function getUser() {
@@ -19,11 +20,34 @@ export default function DashboardPage() {
         router.push("/login");
       } else {
         setEmail(user.email || "");
+        loadEntries();
       }
     }
 
     getUser();
   }, [router]);
+
+  async function loadEntries() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const { data, error } = await supabase
+      .from("time_entries")
+      .select("*")
+      .eq("user_id", user.id)
+      .gte("created_at", today.toISOString())
+      .order("created_at", { ascending: false });
+
+    if (!error && data) {
+      setEntries(data);
+    }
+  }
 
   async function handleClockIn() {
     const {
@@ -43,6 +67,7 @@ export default function DashboardPage() {
       alert(error.message);
     } else {
       alert("Erfolgreich eingestempelt!");
+      loadEntries();
     }
   }
 
@@ -78,6 +103,7 @@ export default function DashboardPage() {
       alert(error.message);
     } else {
       alert("Erfolgreich ausgestempelt!");
+      loadEntries();
     }
   }
 
@@ -116,6 +142,41 @@ export default function DashboardPage() {
           >
             Gehen
           </button>
+        </div>
+
+        <div className="mt-6">
+          <h2 className="mb-2 text-lg font-semibold text-gray-800">
+            Heutige Einträge
+          </h2>
+
+          <div className="space-y-2">
+            {entries.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                Heute noch keine Einträge.
+              </p>
+            ) : (
+              entries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="rounded-lg border border-gray-200 p-3 text-sm"
+                >
+                  <p>
+                    <strong>Kommen:</strong>{" "}
+                    {entry.clock_in
+                      ? new Date(entry.clock_in).toLocaleTimeString()
+                      : "-"}
+                  </p>
+
+                  <p>
+                    <strong>Gehen:</strong>{" "}
+                    {entry.clock_out
+                      ? new Date(entry.clock_out).toLocaleTimeString()
+                      : "-"}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         <button
