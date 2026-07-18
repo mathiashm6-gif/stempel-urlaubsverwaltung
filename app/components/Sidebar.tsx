@@ -31,6 +31,8 @@ const ADMIN_NAV: NavSection = {
   section: "Verwaltung",
   items: [
     { href: "/team", label: "Team-Status", icon: "users" },
+    { href: "/kalender", label: "Urlaubskalender", icon: "calendar" },
+    { href: "/mitarbeiter", label: "Mitarbeiter", icon: "user" },
     { href: "/admin", label: "Verwaltung", icon: "sliders" },
   ],
 };

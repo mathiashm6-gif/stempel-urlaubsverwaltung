@@ -36,6 +36,12 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M16.2 5.1a3.1 3.1 0 0 1 0 5.9M21.2 20c0-2.5-1.4-4.1-3.6-4.8" />
     </>
   ),
+  user: (
+    <>
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M5 20c0-3.7 3.1-6 7-6s7 2.3 7 6" />
+    </>
+  ),
   sliders: (
     <>
       <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h7M15 18h5" />
