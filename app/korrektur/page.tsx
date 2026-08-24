@@ -232,40 +232,27 @@ export default function KorrekturPage() {
         alert("Die Geht-Zeit darf nicht vor der Kommt-Zeit liegen.");
         return;
       }
-      if (isPause(action.entry)) {
-        // Pausenzeit ändern: direkt übernehmen, keine Genehmigung nötig
-        if (!editOut) {
-          alert("Bitte Start und Ende der Pause angeben.");
-          return;
-        }
-        const { error } = await supabase
-          .from("time_entries")
-          .update({
-            clock_in: toISO(selectedDate, editIn),
-            clock_out: toISO(selectedDate, editOut),
-          })
-          .eq("id", action.entry.id);
-        if (error) {
-          alert(error.message);
-          return;
-        }
-      } else {
-        const { error } = await supabase.from("time_corrections").insert([
-          {
-            user_id: uid,
-            entry_id: action.entry.id,
-            kind: "edit",
-            entry_kind: action.entry.kind || "work",
-            target_date: selectedDate,
-            requested_clock_in: toISO(selectedDate, editIn),
-            requested_clock_out: editOut ? toISO(selectedDate, editOut) : null,
-            reason: editReason || null,
-          },
-        ]);
-        if (error) {
-          alert(error.message);
-          return;
-        }
+      // Auch Pausen laufen über den Korrekturantrag: jede nachträgliche
+      // Änderung einer Zeitaufzeichnung muss genehmigt werden.
+      if (isPause(action.entry) && !editOut) {
+        alert("Bitte Start und Ende der Pause angeben.");
+        return;
+      }
+      const { error } = await supabase.from("time_corrections").insert([
+        {
+          user_id: uid,
+          entry_id: action.entry.id,
+          kind: "edit",
+          entry_kind: action.entry.kind || "work",
+          target_date: selectedDate,
+          requested_clock_in: toISO(selectedDate, editIn),
+          requested_clock_out: editOut ? toISO(selectedDate, editOut) : null,
+          reason: editReason || null,
+        },
+      ]);
+      if (error) {
+        alert(error.message);
+        return;
       }
     } else {
       const { error } = await supabase.from("time_corrections").insert([
@@ -383,15 +370,15 @@ export default function KorrekturPage() {
         <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-5">
           <h3 className="mb-1 text-[15px] font-semibold text-slate-900">
             {editingPause
-              ? "Pausenzeit ändern"
+              ? "Pausenzeit ändern beantragen"
               : action.mode === "edit"
               ? "Zeit ändern beantragen"
               : "Löschen beantragen"}
           </h3>
           {editingPause && (
-            <p className="mb-3 text-[12.5px] text-emerald-700">
-              Änderungen an Pausen werden sofort übernommen – keine Genehmigung
-              nötig.
+            <p className="mb-3 text-[12.5px] text-slate-600">
+              Auch Änderungen an Pausen müssen genehmigt werden. Die Buchung
+              bleibt bis zur Freigabe unverändert.
             </p>
           )}
           {action.mode === "edit" ? (

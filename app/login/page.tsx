@@ -5,30 +5,49 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Icon } from "../components/icons";
 
+// Supabase liefert technische Meldungen ("Load failed" bei Netzwerkfehlern in
+// Safari, "Failed to fetch" in Chrome). Für Mitarbeiter übersetzt.
+function lesbarerFehler(message: string) {
+  const m = message.toLowerCase();
+  if (
+    m.includes("load failed") ||
+    m.includes("failed to fetch") ||
+    m.includes("networkerror") ||
+    m.includes("fetch failed")
+  ) {
+    return "Der Server ist gerade nicht erreichbar. Bitte in ein paar Minuten noch einmal versuchen.";
+  }
+  if (m.includes("invalid login credentials")) {
+    return "E-Mail-Adresse oder Passwort stimmen nicht.";
+  }
+  if (m.includes("email not confirmed")) {
+    return "Diese E-Mail-Adresse wurde noch nicht bestätigt.";
+  }
+  if (m.includes("rate limit") || m.includes("too many")) {
+    return "Zu viele Versuche. Bitte kurz warten und noch einmal probieren.";
+  }
+  return message;
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-
-  async function handleSignUp() {
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage("Registrierung erfolgreich – du kannst dich jetzt einloggen.");
-    }
-  }
+  const [busy, setBusy] = useState(false);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    setBusy(true);
+    setMessage("");
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
+    setBusy(false);
     if (error) {
-      setMessage(error.message);
+      setMessage(lesbarerFehler(error.message));
     } else {
       router.push("/dashboard");
     }
@@ -43,7 +62,7 @@ export default function LoginPage() {
       redirectTo: `${window.location.origin}/reset`,
     });
     if (error) {
-      setMessage(error.message);
+      setMessage(lesbarerFehler(error.message));
     } else {
       setMessage(
         "Wir haben dir einen Link zum Zurücksetzen geschickt. Bitte schau in dein E-Mail-Postfach."
@@ -62,7 +81,7 @@ export default function LoginPage() {
             <p className="text-lg font-semibold tracking-tight text-slate-900">
               Zeiterfassung
             </p>
-            <p className="text-xs text-slate-400">Anmelden oder registrieren</p>
+            <p className="text-xs text-slate-400">Anmelden</p>
           </div>
         </div>
 
@@ -99,19 +118,13 @@ export default function LoginPage() {
             </p>
           )}
 
-          <div className="flex gap-3 pt-1">
+          <div className="pt-1">
             <button
               type="submit"
-              className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+              disabled={busy}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
             >
-              Einloggen
-            </button>
-            <button
-              type="button"
-              onClick={handleSignUp}
-              className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Registrieren
+              {busy ? "Wird geprüft …" : "Einloggen"}
             </button>
           </div>
 

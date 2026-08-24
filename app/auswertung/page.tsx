@@ -7,7 +7,7 @@ import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
 import { downloadCsv } from "@/lib/csv";
-import { isPause, entryMs } from "@/lib/time";
+import { netWorkedMsByDay } from "@/lib/time";
 
 type TimeEntry = {
   id: string;
@@ -139,13 +139,12 @@ export default function AuswertungPage() {
     const entries = (entryData || []) as TimeEntry[];
     const vacations = (vacData || []) as VacationRequest[];
 
-    const workedByDay: Record<string, number> = {};
-    entries.forEach((e) => {
-      if (!e.clock_in) return;
-      const key = localDateKey(new Date(e.clock_in));
-      const sign = isPause(e) ? -1 : 1;
-      workedByDay[key] = (workedByDay[key] || 0) + sign * entryMs(e, Date.now());
-    });
+    // Netto-Arbeitszeit je Tag inkl. automatischer Pausenverrechnung (§ 11 AZG)
+    const workedByDay = netWorkedMsByDay(
+      entries,
+      (iso) => localDateKey(new Date(iso)),
+      Date.now()
+    );
 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const todayKey = localDateKey(now);

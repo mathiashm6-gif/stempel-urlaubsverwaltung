@@ -7,7 +7,7 @@ import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
 import { downloadCsv } from "@/lib/csv";
-import { isPause, entryMs } from "@/lib/time";
+import { netWorkedMsByDay } from "@/lib/time";
 
 type TimeEntry = {
   id: string;
@@ -125,15 +125,17 @@ export default function StundenkontoPage() {
     const entries = (entryData || []) as TimeEntry[];
     const vacations = (vacData || []) as VacationRequest[];
 
-    // Ist-Minuten je Tag
-    const workedByDay: Record<string, number> = {};
+    // Ist-Minuten je Tag inkl. automatischer Pausenverrechnung (§ 11 AZG)
+    const workedByDay = netWorkedMsByDay(
+      entries,
+      (iso) => localDateKey(new Date(iso)),
+      Date.now()
+    );
+
     let firstDate: Date | null = null;
     entries.forEach((e) => {
       if (!e.clock_in) return;
       const inDate = new Date(e.clock_in);
-      const key = localDateKey(inDate);
-      const sign = isPause(e) ? -1 : 1;
-      workedByDay[key] = (workedByDay[key] || 0) + sign * entryMs(e, Date.now());
       if (!firstDate || inDate < firstDate) firstDate = inDate;
     });
 

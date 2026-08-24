@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
-import { isPause, entryMs } from "@/lib/time";
+import { isPause, netWorkedMsByDay } from "@/lib/time";
 
 type Profile = {
   id: string;
@@ -150,21 +150,21 @@ export default function TeamPage() {
       const model = p.work_model_id ? modelById[p.work_model_id] : undefined;
       const userVac = vacations.filter((v) => v.user_id === p.id);
 
-      const workedByDay: Record<string, number> = {};
-      let present = false;
-      let todayMin = 0;
+      // Netto-Arbeitszeit je Tag inkl. automatischer Pausenverrechnung (§ 11 AZG)
+      const workedByDay = netWorkedMsByDay(
+        userEntries,
+        (iso) => localDateKey(new Date(iso)),
+        Date.now()
+      );
 
+      let present = false;
       userEntries.forEach((e) => {
         if (!e.clock_in) return;
-        const key = localDateKey(new Date(e.clock_in));
-        const ms = entryMs(e, Date.now());
-        const sign = isPause(e) ? -1 : 1;
-        workedByDay[key] = (workedByDay[key] || 0) + sign * ms;
-        if (key === todayKey) {
-          if (!e.clock_out && !isPause(e)) present = true;
-          todayMin += (sign * ms) / 60000;
-        }
+        if (localDateKey(new Date(e.clock_in)) !== todayKey) return;
+        if (!e.clock_out && !isPause(e)) present = true;
       });
+
+      const todayMin = (workedByDay[todayKey] || 0) / 60000;
 
       let saldoMin = 0;
       for (let d = 1; d <= daysInMonth; d++) {

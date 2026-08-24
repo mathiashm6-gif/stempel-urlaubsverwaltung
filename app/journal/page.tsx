@@ -48,6 +48,7 @@ type JournalRow = {
   komm: string;
   geht: string;
   pauseMin: number;
+  autoPauseMin: number;
   targetMin: number;
   workedMin: number;
   running: boolean;
@@ -209,6 +210,7 @@ export default function JournalPage() {
         komm: fig.komm ? timeLabel(fig.komm) : "",
         geht: fig.geht ? timeLabel(fig.geht) : "",
         pauseMin: Math.round(fig.pauseMs / 60000),
+        autoPauseMin: Math.round(fig.autoPauseMs / 60000),
         targetMin,
         workedMin: absence ? targetMin : workedMin,
         running: fig.running,
@@ -380,6 +382,14 @@ export default function JournalPage() {
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
                       {r.pauseMin ? formatMinutes(r.pauseMin) : "–"}
+                      {r.autoPauseMin > 0 && (
+                        <span
+                          className="ml-1 text-amber-600"
+                          title={`Davon ${r.autoPauseMin} min gesetzliche Pause automatisch verrechnet`}
+                        >
+                          *
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
                       {r.targetMin ? formatMinutes(r.targetMin) : "–"}
@@ -453,7 +463,9 @@ export default function JournalPage() {
       <p className="mt-3 text-xs text-slate-400">
         Wochenenden sind ausgegraut, Feiertage blau markiert (Soll 0),
         genehmigte Abwesenheiten erfüllen das Soll, zukünftige Tage sind noch
-        offen.
+        offen. Ein <span className="text-amber-600">*</span> bei der Pause
+        bedeutet, dass die gesetzliche Ruhepause von 30 Minuten (ab mehr als
+        6 Stunden Arbeitszeit, § 11 AZG) automatisch verrechnet wurde.
       </p>
     </Shell>
   );

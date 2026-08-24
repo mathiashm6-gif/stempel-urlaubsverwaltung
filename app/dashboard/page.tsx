@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
-import { netWorkedMs, isPause } from "@/lib/time";
+import { dayFigures, isPause } from "@/lib/time";
 
 type WorkModel = {
   name: string;
@@ -167,7 +167,7 @@ export default function DashboardPage() {
   }
 
   function totalMs() {
-    return netWorkedMs(entries, nowMs);
+    return dayFigures(entries, nowMs).workedMs;
   }
 
   function targetHoursForDate(dateValue: string) {
@@ -185,6 +185,9 @@ export default function DashboardPage() {
     };
     return Number(map[day] || 0);
   }
+
+  const figures = dayFigures(entries, nowMs);
+  const autoPauseMin = Math.round(figures.autoPauseMs / 60000);
 
   const today = new Date().toISOString().split("T")[0];
   const isToday = selectedDate === today;
@@ -245,6 +248,11 @@ export default function DashboardPage() {
           <p className="mt-1 text-xs text-slate-400">
             Tagesziel {targetHours ? `${targetHours}` : "0"} Std
           </p>
+          {autoPauseMin > 0 && (
+            <p className="mt-1.5 text-xs text-amber-600">
+              Abzüglich {autoPauseMin} min gesetzliche Pause (ab 6 Std)
+            </p>
+          )}
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-[12.5px] text-slate-500">Differenz zum Soll</p>
