@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { isHoliday } from "@/lib/holidays";
+import {
+  WorkModel,
+  countWorkDays,
+  formatDays,
+  vacationEntitlement,
+  weeklyHours,
+  workdayLabel,
+} from "@/lib/workmodel";
 
 type VacationRequest = {
   id: number;
@@ -25,26 +32,6 @@ const ABSENCE_TYPES = [
   "Zeitausgleich",
 ];
 
-function dayKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-}
-
-function workingDays(start: string, end: string) {
-  const s = new Date(start);
-  const e = new Date(end);
-  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return 0;
-  let count = 0;
-  const d = new Date(s);
-  while (d <= e) {
-    const wd = d.getDay();
-    if (wd !== 0 && wd !== 6 && !isHoliday(dayKey(d))) count++;
-    d.setDate(d.getDate() + 1);
-  }
-  return count;
-}
-
 function statusLabel(status: string) {
   if (status === "approved")
     return { text: "Genehmigt", cls: "bg-emerald-50 text-emerald-700" };
@@ -57,11 +44,17 @@ export default function UrlaubPage() {
   const router = useRouter();
 
   const [vacationDays, setVacationDays] = useState(0);
+  const [entryDate, setEntryDate] = useState<string | null>(null);
+  const [workModel, setWorkModel] = useState<WorkModel | null>(null);
   const [type, setType] = useState("Urlaub");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [requests, setRequests] = useState<VacationRequest[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Ein Urlaubstag ist ein fixer Arbeitstag des Zeitmodells.
+  const workingDays = (start: string, end: string) =>
+    countWorkDays(workModel, start, end);
 
   async function loadData() {
     const {
@@ -75,10 +68,24 @@ export default function UrlaubPage() {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("vacation_days")
+      // "*" statt Spaltenliste: entry_date existiert erst nach der Migration
+      .select("*")
       .eq("id", user.id)
       .single();
-    if (profile) setVacationDays(Number(profile.vacation_days || 0));
+    if (profile) {
+      setVacationDays(Number(profile.vacation_days || 0));
+      setEntryDate((profile.entry_date as string | null) || null);
+      if (profile.work_model_id) {
+        const { data: wm } = await supabase
+          .from("work_models")
+          .select("*")
+          .eq("id", profile.work_model_id)
+          .single();
+        setWorkModel((wm as WorkModel) || null);
+      } else {
+        setWorkModel(null);
+      }
+    }
 
     const { data, error } = await supabase
       .from("vacation_requests")
@@ -142,9 +149,13 @@ export default function UrlaubPage() {
   const pendingDays = thisYearUrlaub
     .filter((r) => r.status === "pending")
     .reduce((a, r) => a + workingDays(r.start_date, r.end_date), 0);
-  const restDays = vacationDays - takenDays;
+
+  // Anspruch fuer das Kalenderjahr, bei unterjaehrigem Eintritt aliquotiert.
+  const entitlement = vacationEntitlement(vacationDays, entryDate, YEAR);
+  const anspruch = entitlement.days;
+  const restDays = anspruch - takenDays;
   const usedPct =
-    vacationDays > 0 ? Math.min(100, Math.round((takenDays / vacationDays) * 100)) : 0;
+    anspruch > 0 ? Math.min(100, Math.round((takenDays / anspruch) * 100)) : 0;
 
   const inputCls =
     "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
@@ -153,12 +164,19 @@ export default function UrlaubPage() {
     <Shell title="Urlaub" subtitle={`Urlaubskonto ${YEAR} und Abwesenheitsanträge`}>
       <div className="grid gap-4 sm:grid-cols-4">
         {[
-          { l: "Jahresanspruch", v: vacationDays, h: "Urlaubstage", c: "text-slate-900" },
-          { l: "Genommen", v: takenDays, h: "genehmigt", c: "text-slate-900" },
-          { l: "Beantragt", v: pendingDays, h: "offen", c: "text-slate-900" },
+          {
+            l: `Anspruch ${YEAR}`,
+            v: formatDays(anspruch),
+            h: entitlement.aliquot
+              ? `aliquot von ${formatDays(entitlement.fullDays)}`
+              : "Urlaubstage",
+            c: "text-slate-900",
+          },
+          { l: "Genommen", v: formatDays(takenDays), h: "genehmigt", c: "text-slate-900" },
+          { l: "Beantragt", v: formatDays(pendingDays), h: "offen", c: "text-slate-900" },
           {
             l: "Resturlaub",
-            v: restDays,
+            v: formatDays(restDays),
             h: "Tage verfügbar",
             c: restDays >= 0 ? "text-emerald-600" : "text-red-600",
           },
@@ -179,8 +197,8 @@ export default function UrlaubPage() {
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between text-xs text-slate-500">
           <span>
-            {takenDays} von {vacationDays} Tagen genommen
-            {pendingDays ? ` · ${pendingDays} beantragt` : ""}
+            {formatDays(takenDays)} von {formatDays(anspruch)} Tagen genommen
+            {pendingDays ? ` · ${formatDays(pendingDays)} beantragt` : ""}
           </span>
           <span className="font-semibold text-slate-700">{usedPct}%</span>
         </div>
@@ -192,6 +210,41 @@ export default function UrlaubPage() {
         </div>
         <p className="mt-2 text-xs text-slate-400">
           Nur Anträge vom Typ Urlaub wirken sich auf das Urlaubskonto aus.
+        </p>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-[15px] font-semibold text-slate-900">
+          Mein Arbeitszeitmodell
+        </h2>
+        <div className="mt-3 grid gap-4 sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-slate-500">Modell</p>
+            <p className="font-semibold text-slate-800">
+              {workModel ? workModel.name : "nicht zugeordnet"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Fixe Arbeitstage</p>
+            <p className="font-semibold text-slate-800">
+              {workdayLabel(workModel)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Wochenstunden</p>
+            <p className="font-semibold text-slate-800">
+              {workModel ? `${formatDays(weeklyHours(workModel))} h` : "–"}
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">
+          {entitlement.aliquot
+            ? `Eintritt am ${new Date(entitlement.from).toLocaleDateString("de-DE")} – der Jahresanspruch von ${formatDays(
+                entitlement.fullDays
+              )} Tagen wird tagesgenau aliquotiert (${entitlement.coveredDays} von ${entitlement.yearDays} Kalendertagen) und auf halbe Tage aufgerundet.`
+            : `Voller Jahresanspruch: ${formatDays(
+                entitlement.fullDays
+              )} Tage. Verbraucht werden nur die fixen Arbeitstage des Zeitmodells.`}
         </p>
       </div>
 
@@ -245,9 +298,9 @@ export default function UrlaubPage() {
               <p className="text-sm text-slate-500">
                 Das entspricht{" "}
                 <span className="font-semibold text-slate-700">
-                  {workingDays(startDate, endDate)} Arbeitstagen
+                  {formatDays(workingDays(startDate, endDate))} Arbeitstagen
                 </span>{" "}
-                (Mo–Fr).
+                ({workdayLabel(workModel)}).
               </p>
             )}
             <button
@@ -295,7 +348,7 @@ export default function UrlaubPage() {
                         {new Date(r.end_date).toLocaleDateString("de-DE")}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">
-                        {workingDays(r.start_date, r.end_date)}
+                        {formatDays(workingDays(r.start_date, r.end_date))}
                       </td>
                       <td className="px-4 py-2.5">
                         <span
@@ -314,8 +367,8 @@ export default function UrlaubPage() {
       </div>
 
       <p className="mt-3 text-xs text-slate-400">
-        Arbeitstage werden als Werktage (Mo–Fr) ohne gesetzliche Feiertage
-        (Österreich) gezählt.
+        Gezählt werden die fixen Arbeitstage des Zeitmodells (
+        {workdayLabel(workModel)}) ohne gesetzliche Feiertage (Österreich).
       </p>
     </Shell>
   );

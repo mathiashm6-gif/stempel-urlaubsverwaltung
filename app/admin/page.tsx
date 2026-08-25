@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
+import {
+  WEEKDAYS,
+  WorkModel,
+  formatDays,
+  vacationEntitlement,
+  weeklyHours,
+  workdayLabel,
+} from "@/lib/workmodel";
 
 type Profile = {
   id: string;
@@ -14,8 +22,26 @@ type Profile = {
   vacation_days: number;
   work_model_id: string | null;
   active?: boolean | null;
+  entry_date?: string | null;
 };
-type WorkModel = { id: string; name: string };
+
+// Formular fuer ein Zeitmodell: Stunden je Wochentag-Spalte.
+type ModelForm = { name: string; hours: Record<string, number> };
+
+const EMPTY_MODEL: ModelForm = {
+  name: "",
+  hours: {
+    monday_hours: 8,
+    tuesday_hours: 8,
+    wednesday_hours: 8,
+    thursday_hours: 8,
+    friday_hours: 8,
+    saturday_hours: 0,
+    sunday_hours: 0,
+  },
+};
+
+const YEAR_NOW = new Date().getFullYear();
 type Vacation = {
   id: number;
   user_id: string;
@@ -70,6 +96,12 @@ export default function AdminPage() {
   const [editRole, setEditRole] = useState("employee");
   const [editVacationDays, setEditVacationDays] = useState(30);
   const [editWorkModelId, setEditWorkModelId] = useState("");
+  const [editEntryDate, setEditEntryDate] = useState("");
+
+  // Zeitmodelle: "new" = neues Modell, sonst die id des bearbeiteten Modells
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [modelForm, setModelForm] = useState<ModelForm>(EMPTY_MODEL);
+  const [savingModel, setSavingModel] = useState(false);
 
   async function init() {
     const {
@@ -175,6 +207,7 @@ export default function AdminPage() {
     setEditRole(profile.role || "employee");
     setEditVacationDays(profile.vacation_days || 30);
     setEditWorkModelId(profile.work_model_id || "");
+    setEditEntryDate(profile.entry_date || "");
   }
 
   async function saveProfile() {
@@ -186,6 +219,7 @@ export default function AdminPage() {
         role: editRole,
         vacation_days: editVacationDays,
         work_model_id: editWorkModelId || null,
+        entry_date: editEntryDate || null,
       })
       .eq("id", editingProfile.id);
     if (error) {
@@ -194,6 +228,84 @@ export default function AdminPage() {
     }
     setEditingProfile(null);
     await loadProfiles();
+  }
+
+  // ---------------- Zeitmodelle ----------------
+
+  function startNewModel() {
+    setEditingModelId("new");
+    setModelForm({ name: "", hours: { ...EMPTY_MODEL.hours } });
+  }
+
+  function startEditModel(m: WorkModel) {
+    const hours: Record<string, number> = {};
+    WEEKDAYS.forEach((w) => {
+      hours[w.field] = Number(m[w.field] || 0);
+    });
+    setEditingModelId(m.id);
+    setModelForm({ name: m.name, hours });
+  }
+
+  function setDayHours(field: string, value: number) {
+    setModelForm((f) => ({
+      ...f,
+      hours: { ...f.hours, [field]: Math.max(0, Math.min(24, value)) },
+    }));
+  }
+
+  function toggleDay(field: string, on: boolean) {
+    // Arbeitstag aus = 0 Stunden. Arbeitstag ein = Vorschlag 8 Stunden.
+    setDayHours(field, on ? modelForm.hours[field] || 8 : 0);
+  }
+
+  async function saveModel() {
+    const name = modelForm.name.trim();
+    if (!name) {
+      alert("Bitte einen Namen für das Zeitmodell vergeben.");
+      return;
+    }
+    const activeDays = WEEKDAYS.filter((w) => (modelForm.hours[w.field] || 0) > 0);
+    if (activeDays.length === 0) {
+      alert("Bitte mindestens einen Arbeitstag mit Stunden festlegen.");
+      return;
+    }
+    setSavingModel(true);
+    const payload: Record<string, string | number> = { name };
+    WEEKDAYS.forEach((w) => {
+      payload[w.field] = Number(modelForm.hours[w.field] || 0);
+    });
+
+    const { error } =
+      editingModelId === "new"
+        ? await supabase.from("work_models").insert([payload])
+        : await supabase
+            .from("work_models")
+            .update(payload)
+            .eq("id", editingModelId as string);
+    setSavingModel(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setEditingModelId(null);
+    await loadWorkModels();
+  }
+
+  async function deleteModel(m: WorkModel) {
+    const used = profiles.filter((p) => p.work_model_id === m.id);
+    if (used.length > 0) {
+      alert(
+        `Das Modell ist noch ${used.length} Mitarbeitern zugeordnet. Bitte zuerst umstellen.`
+      );
+      return;
+    }
+    if (!confirm(`Zeitmodell "${m.name}" wirklich löschen?`)) return;
+    const { error } = await supabase.from("work_models").delete().eq("id", m.id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    await loadWorkModels();
   }
 
   async function approveCorrection(c: Correction) {
@@ -286,8 +398,9 @@ export default function AdminPage() {
               <th className="px-4 py-2.5">Name</th>
               <th className="px-4 py-2.5">E-Mail</th>
               <th className="px-4 py-2.5">Rolle</th>
-              <th className="px-4 py-2.5 text-right">Urlaubstage</th>
+              <th className="px-4 py-2.5 text-right">Urlaub {YEAR_NOW}</th>
               <th className="px-4 py-2.5">Zeitmodell</th>
+              <th className="px-4 py-2.5">Eintritt</th>
               <th className="px-4 py-2.5">Status</th>
               <th className="px-4 py-2.5 text-right">Aktion</th>
             </tr>
@@ -311,10 +424,31 @@ export default function AdminPage() {
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums">
-                  {p.vacation_days}
+                  {(() => {
+                    const ent = vacationEntitlement(
+                      p.vacation_days,
+                      p.entry_date,
+                      YEAR_NOW
+                    );
+                    return (
+                      <>
+                        {formatDays(ent.days)}
+                        {ent.aliquot && (
+                          <span className="ml-1 text-xs text-amber-600">
+                            aliquot
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-2.5 text-slate-600">
                   {workModelName(p.work_model_id)}
+                </td>
+                <td className="px-4 py-2.5 text-slate-600">
+                  {p.entry_date
+                    ? new Date(p.entry_date).toLocaleDateString("de-DE")
+                    : "–"}
                 </td>
                 <td className="px-4 py-2.5">
                   {p.active !== false ? (
@@ -364,7 +498,7 @@ export default function AdminPage() {
             Mitarbeiter bearbeiten
           </h3>
           <p className="mb-4 text-sm text-slate-500">{editingProfile.email}</p>
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-5">
             <div>
               <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
                 Name
@@ -390,7 +524,7 @@ export default function AdminPage() {
             </div>
             <div>
               <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
-                Urlaubstage
+                Urlaubstage / Jahr
               </label>
               <input
                 type="number"
@@ -411,12 +545,39 @@ export default function AdminPage() {
                 <option value="">Bitte wählen</option>
                 {workModels.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name}
+                    {m.name} · {workdayLabel(m)}
                   </option>
                 ))}
               </select>
             </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Eintrittsdatum
+              </label>
+              <input
+                type="date"
+                value={editEntryDate}
+                onChange={(e) => setEditEntryDate(e.target.value)}
+                className={inputCls}
+              />
+            </div>
           </div>
+          <p className="mt-3 text-xs text-slate-500">
+            {(() => {
+              const ent = vacationEntitlement(
+                editVacationDays,
+                editEntryDate || null,
+                YEAR_NOW
+              );
+              return ent.aliquot
+                ? `Anspruch ${YEAR_NOW}: ${formatDays(ent.days)} Tage – aliquot aus ${formatDays(
+                    ent.fullDays
+                  )} Tagen für ${ent.coveredDays} von ${ent.yearDays} Kalendertagen, aufgerundet auf halbe Tage.`
+                : `Anspruch ${YEAR_NOW}: ${formatDays(
+                    ent.days
+                  )} Tage (ganzjährig beschäftigt). Ohne Eintrittsdatum wird nicht aliquotiert.`;
+            })()}
+          </p>
           <div className="mt-4 flex gap-3">
             <button
               onClick={saveProfile}
@@ -426,6 +587,192 @@ export default function AdminPage() {
             </button>
             <button
               onClick={() => setEditingProfile(null)}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Zeitmodelle */}
+      <div className="mt-8 mb-3 flex items-center justify-between">
+        <h2 className="text-[15px] font-semibold text-slate-900">
+          Arbeitszeitmodelle
+        </h2>
+        <button
+          onClick={startNewModel}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+        >
+          <Icon name="check" className="h-3.5 w-3.5" />
+          Neues Zeitmodell
+        </button>
+      </div>
+      <div className={cardCls}>
+        <table className="w-full text-sm">
+          <thead className={theadCls}>
+            <tr>
+              <th className="px-4 py-2.5">Name</th>
+              <th className="px-4 py-2.5">Fixe Arbeitstage</th>
+              {WEEKDAYS.map((w) => (
+                <th key={w.field} className="px-2 py-2.5 text-right">
+                  {w.short}
+                </th>
+              ))}
+              <th className="px-4 py-2.5 text-right">Woche</th>
+              <th className="px-4 py-2.5 text-right">Zugeordnet</th>
+              <th className="px-4 py-2.5 text-right">Aktion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workModels.map((m) => (
+              <tr key={m.id} className="border-t border-slate-100">
+                <td className="px-4 py-2.5 font-medium text-slate-700">
+                  {m.name}
+                </td>
+                <td className="px-4 py-2.5 text-slate-600">
+                  {workdayLabel(m)}
+                </td>
+                {WEEKDAYS.map((w) => {
+                  const h = Number(m[w.field] || 0);
+                  return (
+                    <td
+                      key={w.field}
+                      className={`px-2 py-2.5 text-right tabular-nums ${
+                        h > 0 ? "text-slate-700" : "text-slate-300"
+                      }`}
+                    >
+                      {h > 0 ? formatDays(h) : "–"}
+                    </td>
+                  );
+                })}
+                <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-800">
+                  {formatDays(weeklyHours(m))} h
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-slate-500">
+                  {profiles.filter((p) => p.work_model_id === m.id).length}
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => startEditModel(m)}
+                      className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                    >
+                      Bearbeiten
+                    </button>
+                    <button
+                      onClick={() => deleteModel(m)}
+                      className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Löschen
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {workModels.length === 0 && (
+              <tr>
+                <td colSpan={12} className="px-4 py-6 text-center text-slate-500">
+                  Noch kein Zeitmodell angelegt.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {editingModelId && (
+        <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-6">
+          <h3 className="mb-1 text-[15px] font-semibold text-slate-900">
+            {editingModelId === "new"
+              ? "Neues Zeitmodell"
+              : "Zeitmodell bearbeiten"}
+          </h3>
+          <p className="mb-4 text-sm text-slate-500">
+            Ein Wochentag mit Stunden ist ein fixer Arbeitstag. Nur diese Tage
+            zählen beim Tagessoll und beim Urlaubsverbrauch.
+          </p>
+
+          <div className="max-w-sm">
+            <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+              Bezeichnung
+            </label>
+            <input
+              value={modelForm.name}
+              onChange={(e) =>
+                setModelForm((f) => ({ ...f, name: e.target.value }))
+              }
+              placeholder="z. B. Teilzeit 20 h (Mo/Mi/Fr)"
+              className={inputCls}
+            />
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            {WEEKDAYS.map((w) => {
+              const h = modelForm.hours[w.field] || 0;
+              const on = h > 0;
+              return (
+                <div
+                  key={w.field}
+                  className={`rounded-lg border p-3 ${
+                    on
+                      ? "border-blue-200 bg-white"
+                      : "border-slate-200 bg-slate-50"
+                  }`}
+                >
+                  <label className="flex items-center gap-2 text-[13px] font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={(e) => toggleDay(w.field, e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    {w.label}
+                  </label>
+                  <div className="mt-2 flex items-center gap-1">
+                    <input
+                      type="number"
+                      step="0.25"
+                      min="0"
+                      max="24"
+                      disabled={!on}
+                      value={h}
+                      onChange={(e) =>
+                        setDayHours(w.field, Number(e.target.value))
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm tabular-nums text-slate-800 disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                    <span className="text-xs text-slate-500">h</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="mt-3 text-sm text-slate-600">
+            {WEEKDAYS.filter((w) => (modelForm.hours[w.field] || 0) > 0).length}{" "}
+            Arbeitstage pro Woche ·{" "}
+            <span className="font-semibold">
+              {formatDays(
+                WEEKDAYS.reduce(
+                  (a, w) => a + (modelForm.hours[w.field] || 0),
+                  0
+                )
+              )}{" "}
+              Wochenstunden
+            </span>
+          </p>
+
+          <div className="mt-4 flex gap-3">
+            <button
+              onClick={saveModel}
+              disabled={savingModel}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {savingModel ? "Wird gespeichert…" : "Speichern"}
+            </button>
+            <button
+              onClick={() => setEditingModelId(null)}
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               Abbrechen

@@ -4,8 +4,18 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
-import { holidayName, isHoliday } from "@/lib/holidays";
+import { holidayName } from "@/lib/holidays";
 import { dayFigures } from "@/lib/time";
+import {
+  WorkModel,
+  countWorkDays,
+  formatDays,
+  isWorkday,
+  targetMinutesForWeekday,
+  vacationEntitlement,
+  weeklyHours,
+  workdayLabel,
+} from "@/lib/workmodel";
 
 type Profile = {
   id: string;
@@ -15,17 +25,7 @@ type Profile = {
   vacation_days: number;
   work_model_id: string | null;
   active?: boolean | null;
-};
-type WorkModel = {
-  id: string;
-  name: string;
-  monday_hours: number | null;
-  tuesday_hours: number | null;
-  wednesday_hours: number | null;
-  thursday_hours: number | null;
-  friday_hours: number | null;
-  saturday_hours: number | null;
-  sunday_hours: number | null;
+  entry_date?: string | null;
 };
 type TimeEntry = {
   id: string;
@@ -79,29 +79,6 @@ function timeLabel(iso: string | null) {
     minute: "2-digit",
   });
 }
-function targetForWeekday(m: WorkModel | null, wd: number) {
-  if (!m) return 0;
-  const map: Record<number, number | null> = {
-    0: m.sunday_hours, 1: m.monday_hours, 2: m.tuesday_hours,
-    3: m.wednesday_hours, 4: m.thursday_hours, 5: m.friday_hours, 6: m.saturday_hours,
-  };
-  return Math.round(Number(map[wd] || 0) * 60);
-}
-function workingDays(start: string, end: string) {
-  const s = new Date(start), e = new Date(end);
-  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return 0;
-  let n = 0;
-  const d = new Date(s);
-  while (d <= e) {
-    const wd = d.getDay();
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-      d.getDate()
-    ).padStart(2, "0")}`;
-    if (wd !== 0 && wd !== 6 && !isHoliday(key)) n++;
-    d.setDate(d.getDate() + 1);
-  }
-  return n;
-}
 
 export default function MitarbeiterPage() {
   const router = useRouter();
@@ -113,9 +90,16 @@ export default function MitarbeiterPage() {
   const [month, setMonth] = useState(now.getMonth());
 
   const [selProfile, setSelProfile] = useState<Profile | null>(null);
-  const [modelName, setModelName] = useState("–");
+  const [workModel, setWorkModel] = useState<WorkModel | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
-  const [vac, setVac] = useState({ anspruch: 0, taken: 0, pending: 0, rest: 0 });
+  const [vac, setVac] = useState({
+    anspruch: 0,
+    full: 0,
+    aliquot: false,
+    taken: 0,
+    pending: 0,
+    rest: 0,
+  });
   const [loading, setLoading] = useState(true);
 
   async function init() {
@@ -165,7 +149,7 @@ export default function MitarbeiterPage() {
         .single();
       model = (wm as WorkModel) || null;
     }
-    setModelName(model ? model.name : "–");
+    setWorkModel(model);
 
     const start = new Date(year, month, 1);
     const end = new Date(year, month + 1, 1);
@@ -197,7 +181,8 @@ export default function MitarbeiterPage() {
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(year, month, d);
       const wd = date.getDay();
-      const isWeekend = wd === 0 || wd === 6;
+      // Kein fixer Arbeitstag laut Zeitmodell (frueher pauschal Sa/So).
+      const isWeekend = !isWorkday(model, wd);
       const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
       const isFuture = iso > todayKey;
       const holiday = !isWeekend ? holidayName(iso) : null;
@@ -214,7 +199,7 @@ export default function MitarbeiterPage() {
         });
       }
       const fig = dayFigures(byDay[iso] || [], Date.now());
-      const targetMin = holiday ? 0 : targetForWeekday(model, wd);
+      const targetMin = holiday ? 0 : targetMinutesForWeekday(model, wd);
       const workedMin = Math.round(fig.workedMs / 60000);
       built.push({
         day: d,
@@ -240,12 +225,23 @@ export default function MitarbeiterPage() {
     );
     const taken = thisYear
       .filter((v) => v.status === "approved")
-      .reduce((a, v) => a + workingDays(v.start_date, v.end_date), 0);
+      .reduce((a, v) => a + countWorkDays(model, v.start_date, v.end_date), 0);
     const pending = thisYear
       .filter((v) => v.status === "pending")
-      .reduce((a, v) => a + workingDays(v.start_date, v.end_date), 0);
-    const anspruch = Number(prof?.vacation_days || 0);
-    setVac({ anspruch, taken, pending, rest: anspruch - taken });
+      .reduce((a, v) => a + countWorkDays(model, v.start_date, v.end_date), 0);
+    const ent = vacationEntitlement(
+      Number(prof?.vacation_days || 0),
+      prof?.entry_date || null,
+      YEAR_NOW
+    );
+    setVac({
+      anspruch: ent.days,
+      full: ent.fullDays,
+      aliquot: ent.aliquot,
+      taken,
+      pending,
+      rest: ent.days - taken,
+    });
 
     setLoading(false);
   }
@@ -342,15 +338,41 @@ export default function MitarbeiterPage() {
                 )}
               </div>
             </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <div className="mt-4 grid gap-4 sm:grid-cols-5">
               <div>
                 <p className="text-xs text-slate-500">Zeitmodell</p>
-                <p className="font-semibold text-slate-800">{modelName}</p>
+                <p className="font-semibold text-slate-800">
+                  {workModel ? workModel.name : "–"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Fixe Arbeitstage</p>
+                <p className="font-semibold text-slate-800">
+                  {workdayLabel(workModel)}
+                  {workModel ? (
+                    <span className="ml-1 text-xs font-normal text-slate-400">
+                      {formatDays(weeklyHours(workModel))} h/Woche
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Eintritt</p>
+                <p className="font-semibold text-slate-800">
+                  {selProfile.entry_date
+                    ? new Date(selProfile.entry_date).toLocaleDateString("de-DE")
+                    : "–"}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-slate-500">Urlaubsanspruch</p>
                 <p className="font-semibold text-slate-800">
-                  {selProfile.vacation_days} Tage
+                  {formatDays(vac.anspruch)} Tage
+                  {vac.aliquot ? (
+                    <span className="ml-1 text-xs font-normal text-amber-600">
+                      aliquot von {formatDays(vac.full)}
+                    </span>
+                  ) : null}
                 </p>
               </div>
               <div>
@@ -360,7 +382,7 @@ export default function MitarbeiterPage() {
                     vac.rest >= 0 ? "text-emerald-600" : "text-red-600"
                   }`}
                 >
-                  {vac.rest} Tage
+                  {formatDays(vac.rest)} Tage
                 </p>
               </div>
             </div>
@@ -369,10 +391,14 @@ export default function MitarbeiterPage() {
           {/* Urlaubskonto */}
           <div className="mt-4 grid gap-4 sm:grid-cols-4">
             {[
-              { l: "Anspruch", v: vac.anspruch, h: "Tage" },
-              { l: "Genommen", v: vac.taken, h: "genehmigt" },
-              { l: "Beantragt", v: vac.pending, h: "offen" },
-              { l: "Rest", v: vac.rest, h: "verfügbar" },
+              {
+                l: "Anspruch",
+                v: formatDays(vac.anspruch),
+                h: vac.aliquot ? "aliquot" : "Tage",
+              },
+              { l: "Genommen", v: formatDays(vac.taken), h: "genehmigt" },
+              { l: "Beantragt", v: formatDays(vac.pending), h: "offen" },
+              { l: "Rest", v: formatDays(vac.rest), h: "verfügbar" },
             ].map((s) => (
               <div
                 key={s.l}

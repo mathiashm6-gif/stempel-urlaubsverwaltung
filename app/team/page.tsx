@@ -6,6 +6,11 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
+import {
+  WorkModel,
+  isWorkday,
+  targetMinutesForWeekday,
+} from "@/lib/workmodel";
 import { isPause, netWorkedMsByDay } from "@/lib/time";
 
 type Profile = {
@@ -14,16 +19,6 @@ type Profile = {
   full_name: string | null;
   role: string;
   work_model_id: string | null;
-};
-type WorkModel = {
-  id: string;
-  monday_hours: number | null;
-  tuesday_hours: number | null;
-  wednesday_hours: number | null;
-  thursday_hours: number | null;
-  friday_hours: number | null;
-  saturday_hours: number | null;
-  sunday_hours: number | null;
 };
 type TimeEntry = {
   id: string;
@@ -61,19 +56,6 @@ function localDateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate()
   ).padStart(2, "0")}`;
-}
-function targetForWeekday(model: WorkModel | undefined, weekday: number) {
-  if (!model) return 0;
-  const map: Record<number, number | null> = {
-    0: model.sunday_hours,
-    1: model.monday_hours,
-    2: model.tuesday_hours,
-    3: model.wednesday_hours,
-    4: model.thursday_hours,
-    5: model.friday_hours,
-    6: model.saturday_hours,
-  };
-  return Math.round(Number(map[weekday] || 0) * 60);
 }
 function initials(name: string) {
   return name
@@ -172,7 +154,7 @@ export default function TeamPage() {
         const key = localDateKey(date);
         if (key > todayKey) break;
         const weekday = date.getDay();
-        const isWeekend = weekday === 0 || weekday === 6;
+        const isWeekend = !isWorkday(model, weekday);
         const holiday = !isWeekend ? holidayName(key) : null;
         let absence = false;
         if (!holiday) {
@@ -183,7 +165,7 @@ export default function TeamPage() {
         }
         if (absence) continue;
         const target =
-          isWeekend || holiday ? 0 : targetForWeekday(model, weekday);
+          isWeekend || holiday ? 0 : targetMinutesForWeekday(model, weekday);
         const worked = Math.max(0, Math.round((workedByDay[key] || 0) / 60000));
         saldoMin += worked - target;
       }

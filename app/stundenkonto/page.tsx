@@ -6,6 +6,11 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
+import {
+  WorkModel,
+  isWorkday,
+  targetMinutesForWeekday,
+} from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
 import { netWorkedMsByDay } from "@/lib/time";
 
@@ -21,17 +26,6 @@ type VacationRequest = {
   start_date: string;
   end_date: string;
   status: string;
-};
-type WorkModel = {
-  id: string;
-  name: string;
-  monday_hours: number | null;
-  tuesday_hours: number | null;
-  wednesday_hours: number | null;
-  thursday_hours: number | null;
-  friday_hours: number | null;
-  saturday_hours: number | null;
-  sunday_hours: number | null;
 };
 type MonthRow = {
   key: string; // YYYY-MM
@@ -56,19 +50,6 @@ function localDateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate()
   ).padStart(2, "0")}`;
-}
-function targetForWeekday(model: WorkModel | null, weekday: number) {
-  if (!model) return 0;
-  const map: Record<number, number | null> = {
-    0: model.sunday_hours,
-    1: model.monday_hours,
-    2: model.tuesday_hours,
-    3: model.wednesday_hours,
-    4: model.thursday_hours,
-    5: model.friday_hours,
-    6: model.saturday_hours,
-  };
-  return Math.round(Number(map[weekday] || 0) * 60);
 }
 
 export default function StundenkontoPage() {
@@ -164,9 +145,9 @@ export default function StundenkontoPage() {
         order.push(mKey);
       }
       const weekday = cur.getDay();
-      const isWeekend = weekday === 0 || weekday === 6;
+      const isWeekend = !isWorkday(model, weekday);
       const holiday = !isWeekend ? holidayName(key) : null;
-      const target = isWeekend || holiday ? 0 : targetForWeekday(model, weekday);
+      const target = isWeekend || holiday ? 0 : targetMinutesForWeekday(model, weekday);
       const worked = Math.max(0, Math.round((workedByDay[key] || 0) / 60000));
 
       let absence = false;

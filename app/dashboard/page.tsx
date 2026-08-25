@@ -6,18 +6,14 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
+import {
+  WorkModel,
+  hoursForWeekday,
+  isWorkday,
+  workdayLabel,
+} from "@/lib/workmodel";
 import { dayFigures, isPause } from "@/lib/time";
 
-type WorkModel = {
-  name: string;
-  monday_hours: number | null;
-  tuesday_hours: number | null;
-  wednesday_hours: number | null;
-  thursday_hours: number | null;
-  friday_hours: number | null;
-  saturday_hours: number | null;
-  sunday_hours: number | null;
-};
 
 type TimeEntry = {
   id: string;
@@ -170,20 +166,16 @@ export default function DashboardPage() {
     return dayFigures(entries, nowMs).workedMs;
   }
 
+  // Tagessoll laut Zeitmodell. Kein fixer Arbeitstag oder Feiertag -> 0.
   function targetHoursForDate(dateValue: string) {
     if (!workModel) return 0;
     if (holidayName(dateValue)) return 0;
-    const day = new Date(dateValue).getDay();
-    const map: Record<number, number | null> = {
-      0: workModel.sunday_hours,
-      1: workModel.monday_hours,
-      2: workModel.tuesday_hours,
-      3: workModel.wednesday_hours,
-      4: workModel.thursday_hours,
-      5: workModel.friday_hours,
-      6: workModel.saturday_hours,
-    };
-    return Number(map[day] || 0);
+    return hoursForWeekday(workModel, new Date(dateValue).getDay());
+  }
+
+  // Ist der gewaehlte Tag ein fixer Arbeitstag des Modells?
+  function isWorkdayForDate(dateValue: string) {
+    return isWorkday(workModel, new Date(dateValue).getDay());
   }
 
   const figures = dayFigures(entries, nowMs);
@@ -246,7 +238,9 @@ export default function DashboardPage() {
             {formatMs(totalMs())}
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            Tagesziel {targetHours ? `${targetHours}` : "0"} Std
+            {workModel && !isWorkdayForDate(selectedDate)
+              ? `Kein Arbeitstag laut Zeitmodell (${workdayLabel(workModel)})`
+              : `Tagesziel ${targetHours ? `${targetHours}` : "0"} Std`}
           </p>
           {autoPauseMin > 0 && (
             <p className="mt-1.5 text-xs text-amber-600">

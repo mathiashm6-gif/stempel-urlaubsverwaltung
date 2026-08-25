@@ -6,6 +6,11 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
+import {
+  WorkModel,
+  isWorkday,
+  targetMinutesForWeekday,
+} from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
 import { dayFigures } from "@/lib/time";
 
@@ -27,17 +32,6 @@ type VacationRequest = {
   type?: string | null;
 };
 
-type WorkModel = {
-  id: string;
-  name: string;
-  monday_hours: number | null;
-  tuesday_hours: number | null;
-  wednesday_hours: number | null;
-  thursday_hours: number | null;
-  friday_hours: number | null;
-  saturday_hours: number | null;
-  sunday_hours: number | null;
-};
 
 type JournalRow = {
   day: number;
@@ -91,19 +85,6 @@ export default function JournalPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
 
-  function targetForWeekday(model: WorkModel | null, weekday: number) {
-    if (!model) return 0;
-    const map: Record<number, number | null> = {
-      0: model.sunday_hours,
-      1: model.monday_hours,
-      2: model.tuesday_hours,
-      3: model.wednesday_hours,
-      4: model.thursday_hours,
-      5: model.friday_hours,
-      6: model.saturday_hours,
-    };
-    return Math.round(Number(map[weekday] || 0) * 60);
-  }
 
   async function loadJournal() {
     const {
@@ -172,7 +153,7 @@ export default function JournalPage() {
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(year, month, d);
       const weekday = date.getDay();
-      const isWeekend = weekday === 0 || weekday === 6;
+      const isWeekend = !isWorkday(model, weekday);
       const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(
         d
       ).padStart(2, "0")}`;
@@ -195,7 +176,7 @@ export default function JournalPage() {
       }
 
       const fig = dayFigures(dayEntries, Date.now());
-      const targetMin = holiday ? 0 : targetForWeekday(model, weekday);
+      const targetMin = holiday ? 0 : targetMinutesForWeekday(model, weekday);
       const workedMin = Math.round(fig.workedMs / 60000);
 
       built.push({
