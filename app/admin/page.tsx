@@ -8,7 +8,12 @@ import { Icon } from "../components/icons";
 import {
   WEEKDAYS,
   WorkModel,
+  daysToMinutes,
   formatDays,
+  formatHm,
+  hoursPerWorkday,
+  minutesToDays,
+  parseHm,
   vacationEntitlement,
   weeklyHours,
   workdayLabel,
@@ -23,6 +28,10 @@ type Profile = {
   work_model_id: string | null;
   active?: boolean | null;
   entry_date?: string | null;
+  opening_balance?: number | null;
+  opening_balance_date?: string | null;
+  vacation_opening_balance?: number | null;
+  vacation_opening_date?: string | null;
 };
 
 // Formular fuer ein Zeitmodell: Stunden je Wochentag-Spalte.
@@ -97,6 +106,13 @@ export default function AdminPage() {
   const [editVacationDays, setEditVacationDays] = useState(30);
   const [editWorkModelId, setEditWorkModelId] = useState("");
   const [editEntryDate, setEditEntryDate] = useState("");
+  // Startsalden aus dem Altsystem: Eingabe als Text ("87:33" oder "87,55"),
+  // gespeichert wird in Minuten.
+  const [editOpening, setEditOpening] = useState("");
+  const [editOpeningDate, setEditOpeningDate] = useState("");
+  const [editVacOpening, setEditVacOpening] = useState("");
+  const [editVacOpeningUnit, setEditVacOpeningUnit] = useState<"h" | "d">("h");
+  const [editVacOpeningDate, setEditVacOpeningDate] = useState("");
 
   // Zeitmodelle: "new" = neues Modell, sonst die id des bearbeiteten Modells
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
@@ -201,6 +217,59 @@ export default function AdminPage() {
     await loadProfiles();
   }
 
+  // Zeitmodell des gerade bearbeiteten Profils – Basis fuer Tage <-> Stunden.
+  const editModel = workModels.find((m) => m.id === editWorkModelId) || null;
+  const editHoursPerDay = hoursPerWorkday(editModel);
+
+  function vacationDaysToMinutes(text: string): number | null {
+    const num = Number((text || "").trim().replace(",", "."));
+    if (!isFinite(num)) return null;
+    if (editHoursPerDay <= 0) return null;
+    return daysToMinutes(editModel, num);
+  }
+
+  // Klartext-Vorschau unter den Startsalden.
+  const startsaldoHinweis = (() => {
+    const parts: string[] = [];
+    const za = editOpening.trim() ? parseHm(editOpening) : 0;
+    parts.push(
+      za === null
+        ? "Zeitausgleich: Eingabe nicht lesbar (erwartet 87:33 oder 87,55)."
+        : `Zeitausgleich: ${formatHm(za)} h${
+            editOpeningDate
+              ? ` ab ${new Date(editOpeningDate).toLocaleDateString("de-DE")}`
+              : " – ohne Stichtag wird das gesamte Stundenkonto gezählt"
+          }.`
+    );
+
+    if (!editModel) {
+      parts.push(
+        "Resturlaub: erst ein Zeitmodell zuordnen – daraus ergeben sich die Stunden je Urlaubstag."
+      );
+      return parts.join(" ");
+    }
+
+    const vac = editVacOpening.trim()
+      ? editVacOpeningUnit === "d"
+        ? vacationDaysToMinutes(editVacOpening)
+        : parseHm(editVacOpening)
+      : 0;
+    if (vac === null) {
+      parts.push("Resturlaub: Eingabe nicht lesbar.");
+      return parts.join(" ");
+    }
+    parts.push(
+      `Resturlaub: ${formatHm(vac)} h ≈ ${formatDays(
+        minutesToDays(editModel, vac)
+      )} Tage (Ø ${formatDays(editHoursPerDay)} h/Tag laut ${editModel.name})${
+        editVacOpeningDate
+          ? ` ab ${new Date(editVacOpeningDate).toLocaleDateString("de-DE")}`
+          : " – ohne Stichtag zählt weiterhin nur das laufende Jahr"
+      }.`
+    );
+    return parts.join(" ");
+  })();
+
   function startEdit(profile: Profile) {
     setEditingProfile(profile);
     setEditFullName(profile.full_name || "");
@@ -208,10 +277,41 @@ export default function AdminPage() {
     setEditVacationDays(profile.vacation_days || 30);
     setEditWorkModelId(profile.work_model_id || "");
     setEditEntryDate(profile.entry_date || "");
+    setEditOpening(
+      profile.opening_balance ? formatHm(Number(profile.opening_balance)) : ""
+    );
+    setEditOpeningDate(profile.opening_balance_date || "");
+    setEditVacOpening(
+      profile.vacation_opening_balance
+        ? formatHm(Number(profile.vacation_opening_balance))
+        : ""
+    );
+    setEditVacOpeningUnit("h");
+    setEditVacOpeningDate(profile.vacation_opening_date || "");
   }
 
   async function saveProfile() {
     if (!editingProfile) return;
+
+    const openingMinutes = editOpening.trim() ? parseHm(editOpening) : 0;
+    if (openingMinutes === null) {
+      alert("ZA-Startsaldo bitte als 87:33 oder 87,55 eingeben.");
+      return;
+    }
+    const vacMinutes = editVacOpening.trim()
+      ? editVacOpeningUnit === "d"
+        ? vacationDaysToMinutes(editVacOpening)
+        : parseHm(editVacOpening)
+      : 0;
+    if (vacMinutes === null) {
+      alert(
+        editVacOpeningUnit === "d"
+          ? "Urlaubs-Startsaldo bitte als Zahl eingeben, z. B. 31,5."
+          : "Urlaubs-Startsaldo bitte als 252:00 oder 252,5 eingeben."
+      );
+      return;
+    }
+
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -220,6 +320,10 @@ export default function AdminPage() {
         vacation_days: editVacationDays,
         work_model_id: editWorkModelId || null,
         entry_date: editEntryDate || null,
+        opening_balance: openingMinutes,
+        opening_balance_date: editOpeningDate || null,
+        vacation_opening_balance: vacMinutes,
+        vacation_opening_date: editVacOpeningDate || null,
       })
       .eq("id", editingProfile.id);
     if (error) {
@@ -399,6 +503,7 @@ export default function AdminPage() {
               <th className="px-4 py-2.5">E-Mail</th>
               <th className="px-4 py-2.5">Rolle</th>
               <th className="px-4 py-2.5 text-right">Urlaub {YEAR_NOW}</th>
+              <th className="px-4 py-2.5 text-right">Startsalden</th>
               <th className="px-4 py-2.5">Zeitmodell</th>
               <th className="px-4 py-2.5">Eintritt</th>
               <th className="px-4 py-2.5">Status</th>
@@ -436,6 +541,27 @@ export default function AdminPage() {
                         {ent.aliquot && (
                           <span className="ml-1 text-xs text-amber-600">
                             aliquot
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
+                  {(() => {
+                    const za = Number(p.opening_balance || 0);
+                    const ur = Number(p.vacation_opening_balance || 0);
+                    if (!za && !ur) return <span className="text-slate-300">–</span>;
+                    const stichtag =
+                      p.vacation_opening_date || p.opening_balance_date || null;
+                    return (
+                      <>
+                        <span className="whitespace-nowrap">
+                          ZA {formatHm(za)} · Urlaub {formatHm(ur)}
+                        </span>
+                        {stichtag && (
+                          <span className="block text-xs text-slate-400">
+                            ab {new Date(stichtag).toLocaleDateString("de-DE")}
                           </span>
                         )}
                       </>
@@ -562,6 +688,75 @@ export default function AdminPage() {
               />
             </div>
           </div>
+
+          <h4 className="mt-6 text-[13px] font-semibold text-slate-900">
+            Startsalden aus dem Altsystem
+          </h4>
+          <p className="mb-3 mt-1 text-xs text-slate-500">
+            Übernommene Stände zu einem Stichtag. Ab dem Stichtag rechnet das
+            Tool selbst weiter – der Zeitraum davor wird nicht mehr gezählt.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Zeitausgleich (h:mm)
+              </label>
+              <input
+                value={editOpening}
+                onChange={(e) => setEditOpening(e.target.value)}
+                placeholder="z. B. 114:08 oder -6:30"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Stichtag Zeitausgleich
+              </label>
+              <input
+                type="date"
+                value={editOpeningDate}
+                onChange={(e) => setEditOpeningDate(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Resturlaub
+              </label>
+              <div className="flex gap-2">
+                <input
+                  value={editVacOpening}
+                  onChange={(e) => setEditVacOpening(e.target.value)}
+                  placeholder={
+                    editVacOpeningUnit === "d" ? "z. B. 31,5" : "z. B. 252:00"
+                  }
+                  className={inputCls}
+                />
+                <select
+                  value={editVacOpeningUnit}
+                  onChange={(e) =>
+                    setEditVacOpeningUnit(e.target.value === "d" ? "d" : "h")
+                  }
+                  className="rounded-lg border border-slate-200 px-2 py-2 text-sm text-slate-800"
+                >
+                  <option value="h">Stunden</option>
+                  <option value="d">Tage</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Stichtag Urlaub
+              </label>
+              <input
+                type="date"
+                value={editVacOpeningDate}
+                onChange={(e) => setEditVacOpeningDate(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">{startsaldoHinweis}</p>
           <p className="mt-3 text-xs text-slate-500">
             {(() => {
               const ent = vacationEntitlement(

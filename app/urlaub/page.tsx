@@ -9,7 +9,11 @@ import {
   WorkModel,
   countWorkDays,
   formatDays,
-  vacationEntitlement,
+  formatHm,
+  hoursPerWorkday,
+  minutesToDays,
+  vacationAccount,
+  vacationMinutes,
   weeklyHours,
   workdayLabel,
 } from "@/lib/workmodel";
@@ -23,7 +27,8 @@ type VacationRequest = {
   type?: string | null;
 };
 
-const YEAR = new Date().getFullYear();
+const TODAY = new Date();
+const YEAR = TODAY.getFullYear();
 const ABSENCE_TYPES = [
   "Urlaub",
   "Krankheit",
@@ -45,6 +50,8 @@ export default function UrlaubPage() {
 
   const [vacationDays, setVacationDays] = useState(0);
   const [entryDate, setEntryDate] = useState<string | null>(null);
+  const [openingMinutes, setOpeningMinutes] = useState(0);
+  const [openingDate, setOpeningDate] = useState<string | null>(null);
   const [workModel, setWorkModel] = useState<WorkModel | null>(null);
   const [type, setType] = useState("Urlaub");
   const [startDate, setStartDate] = useState("");
@@ -52,9 +59,12 @@ export default function UrlaubPage() {
   const [requests, setRequests] = useState<VacationRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Ein Urlaubstag ist ein fixer Arbeitstag des Zeitmodells.
+  // Ein Urlaubstag ist ein fixer Arbeitstag des Zeitmodells; verbraucht
+  // werden die Sollstunden dieses Wochentags.
   const workingDays = (start: string, end: string) =>
     countWorkDays(workModel, start, end);
+  const workingMinutes = (start: string, end: string) =>
+    vacationMinutes(workModel, start, end);
 
   async function loadData() {
     const {
@@ -75,6 +85,9 @@ export default function UrlaubPage() {
     if (profile) {
       setVacationDays(Number(profile.vacation_days || 0));
       setEntryDate((profile.entry_date as string | null) || null);
+      // Uebernommener Resturlaub aus dem Altsystem (Minuten) samt Stichtag
+      setOpeningMinutes(Number(profile.vacation_opening_balance || 0));
+      setOpeningDate((profile.vacation_opening_date as string | null) || null);
       if (profile.work_model_id) {
         const { data: wm } = await supabase
           .from("work_models")
@@ -139,23 +152,26 @@ export default function UrlaubPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isUrlaub = (r: VacationRequest) => (r.type || "Urlaub") === "Urlaub";
-  const thisYearUrlaub = requests.filter(
-    (r) => isUrlaub(r) && new Date(r.start_date).getFullYear() === YEAR
-  );
-  const takenDays = thisYearUrlaub
-    .filter((r) => r.status === "approved")
-    .reduce((a, r) => a + workingDays(r.start_date, r.end_date), 0);
-  const pendingDays = thisYearUrlaub
-    .filter((r) => r.status === "pending")
-    .reduce((a, r) => a + workingDays(r.start_date, r.end_date), 0);
-
-  // Anspruch fuer das Kalenderjahr, bei unterjaehrigem Eintritt aliquotiert.
-  const entitlement = vacationEntitlement(vacationDays, entryDate, YEAR);
-  const anspruch = entitlement.days;
-  const restDays = anspruch - takenDays;
+  // Urlaubskonto in Stunden: Startsaldo (Uebernahme) + Jahresansprueche
+  // seither, minus genehmigter Verbrauch ab dem Stichtag.
+  const hoursPerDay = hoursPerWorkday(workModel);
+  const account = vacationAccount({
+    model: workModel,
+    fullDays: vacationDays,
+    entryDate,
+    openingMinutes,
+    openingDate,
+    requests,
+    today: TODAY,
+  });
+  const budgetMinutes = account.openingMinutes + account.accruedMinutes;
+  const restMinutes = account.restMinutes;
   const usedPct =
-    anspruch > 0 ? Math.min(100, Math.round((takenDays / anspruch) * 100)) : 0;
+    budgetMinutes > 0
+      ? Math.min(100, Math.round((account.usedMinutes / budgetMinutes) * 100))
+      : 0;
+  const asDays = (min: number) =>
+    hoursPerDay > 0 ? `${formatDays(minutesToDays(workModel, min))} Tage` : "Tage unbekannt";
 
   const inputCls =
     "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
@@ -165,20 +181,30 @@ export default function UrlaubPage() {
       <div className="grid gap-4 sm:grid-cols-4">
         {[
           {
-            l: `Anspruch ${YEAR}`,
-            v: formatDays(anspruch),
-            h: entitlement.aliquot
-              ? `aliquot von ${formatDays(entitlement.fullDays)}`
-              : "Urlaubstage",
+            l: account.hasOpening ? "Guthaben gesamt" : `Anspruch ${YEAR}`,
+            v: formatHm(budgetMinutes),
+            h: account.hasOpening
+              ? `Startsaldo ${formatHm(account.openingMinutes)} + Anspruch seither`
+              : asDays(budgetMinutes),
             c: "text-slate-900",
           },
-          { l: "Genommen", v: formatDays(takenDays), h: "genehmigt", c: "text-slate-900" },
-          { l: "Beantragt", v: formatDays(pendingDays), h: "offen", c: "text-slate-900" },
+          {
+            l: "Genommen",
+            v: formatHm(account.usedMinutes),
+            h: `genehmigt · ${asDays(account.usedMinutes)}`,
+            c: "text-slate-900",
+          },
+          {
+            l: "Beantragt",
+            v: formatHm(account.pendingMinutes),
+            h: `offen · ${asDays(account.pendingMinutes)}`,
+            c: "text-slate-900",
+          },
           {
             l: "Resturlaub",
-            v: formatDays(restDays),
-            h: "Tage verfügbar",
-            c: restDays >= 0 ? "text-emerald-600" : "text-red-600",
+            v: formatHm(restMinutes),
+            h: `verfügbar · ${asDays(restMinutes)}`,
+            c: restMinutes >= 0 ? "text-emerald-600" : "text-red-600",
           },
         ].map((s) => (
           <div
@@ -197,8 +223,11 @@ export default function UrlaubPage() {
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between text-xs text-slate-500">
           <span>
-            {formatDays(takenDays)} von {formatDays(anspruch)} Tagen genommen
-            {pendingDays ? ` · ${formatDays(pendingDays)} beantragt` : ""}
+            {formatHm(account.usedMinutes)} von {formatHm(budgetMinutes)} Stunden
+            genommen
+            {account.pendingMinutes
+              ? ` · ${formatHm(account.pendingMinutes)} beantragt`
+              : ""}
           </span>
           <span className="font-semibold text-slate-700">{usedPct}%</span>
         </div>
@@ -238,13 +267,23 @@ export default function UrlaubPage() {
           </div>
         </div>
         <p className="mt-3 text-xs text-slate-400">
-          {entitlement.aliquot
-            ? `Eintritt am ${new Date(entitlement.from).toLocaleDateString("de-DE")} – der Jahresanspruch von ${formatDays(
-                entitlement.fullDays
-              )} Tagen wird tagesgenau aliquotiert (${entitlement.coveredDays} von ${entitlement.yearDays} Kalendertagen) und auf halbe Tage aufgerundet.`
-            : `Voller Jahresanspruch: ${formatDays(
-                entitlement.fullDays
-              )} Tage. Verbraucht werden nur die fixen Arbeitstage des Zeitmodells.`}
+          {account.hasOpening
+            ? `Startsaldo ${formatHm(account.openingMinutes)} zum ${new Date(
+                account.fromKey
+              ).toLocaleDateString("de-DE")}; seither ${
+                account.accrualYears.length
+                  ? account.accrualYears
+                      .map((y) => `${y.year}: ${formatHm(y.minutes)}`)
+                      .join(", ")
+                  : "kein weiterer Jahresanspruch"
+              }. Ein Urlaubstag verbraucht die Sollstunden des jeweiligen Wochentags${
+                hoursPerDay > 0 ? ` (Ø ${formatDays(hoursPerDay)} h)` : ""
+              }.`
+            : `Jahresanspruch ${formatDays(
+                vacationDays
+              )} Tage. Gerechnet wird in Stunden: ein Urlaubstag verbraucht die Sollstunden des jeweiligen Wochentags${
+                hoursPerDay > 0 ? ` (Ø ${formatDays(hoursPerDay)} h)` : ""
+              }.`}
         </p>
       </div>
 
@@ -298,9 +337,10 @@ export default function UrlaubPage() {
               <p className="text-sm text-slate-500">
                 Das entspricht{" "}
                 <span className="font-semibold text-slate-700">
-                  {formatDays(workingDays(startDate, endDate))} Arbeitstagen
+                  {formatHm(workingMinutes(startDate, endDate))} Stunden
                 </span>{" "}
-                ({workdayLabel(workModel)}).
+                an {formatDays(workingDays(startDate, endDate))} Arbeitstagen (
+                {workdayLabel(workModel)}).
               </p>
             )}
             <button
@@ -331,7 +371,7 @@ export default function UrlaubPage() {
                 <tr>
                   <th className="px-4 py-2.5">Art</th>
                   <th className="px-4 py-2.5">Zeitraum</th>
-                  <th className="px-4 py-2.5 text-right">Tage</th>
+                  <th className="px-4 py-2.5 text-right">Stunden</th>
                   <th className="px-4 py-2.5">Status</th>
                 </tr>
               </thead>
@@ -348,7 +388,7 @@ export default function UrlaubPage() {
                         {new Date(r.end_date).toLocaleDateString("de-DE")}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">
-                        {formatDays(workingDays(r.start_date, r.end_date))}
+                        {formatHm(workingMinutes(r.start_date, r.end_date))}
                       </td>
                       <td className="px-4 py-2.5">
                         <span
@@ -367,7 +407,7 @@ export default function UrlaubPage() {
       </div>
 
       <p className="mt-3 text-xs text-slate-400">
-        Gezählt werden die fixen Arbeitstage des Zeitmodells (
+        Gezählt werden die Sollstunden der fixen Arbeitstage des Zeitmodells (
         {workdayLabel(workModel)}) ohne gesetzliche Feiertage (Österreich).
       </p>
     </Shell>

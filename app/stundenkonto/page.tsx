@@ -9,6 +9,7 @@ import { holidayName } from "@/lib/holidays";
 import {
   WorkModel,
   isWorkday,
+  parseDateKey,
   targetMinutesForWeekday,
 } from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
@@ -58,6 +59,7 @@ export default function StundenkontoPage() {
   const [loading, setLoading] = useState(true);
   const [hasModel, setHasModel] = useState(true);
   const [opening, setOpening] = useState(0);
+  const [openingDate, setOpeningDate] = useState<string | null>(null);
   const [rows, setRows] = useState<MonthRow[]>([]);
   const [balance, setBalance] = useState(0);
 
@@ -87,9 +89,12 @@ export default function StundenkontoPage() {
       model = (wm as WorkModel) || null;
     }
     setHasModel(!!model);
-    // Optionaler Startsaldo (Spalte opening_balance in Minuten – 0, falls nicht vorhanden)
+    // Startsaldo in Minuten samt Stichtag. Mit Stichtag zaehlt das Konto erst
+    // ab diesem Tag – der Zeitraum davor steckt bereits im Startsaldo.
     const openingMin = Number(profile?.opening_balance || 0);
+    const openingKey = (profile?.opening_balance_date as string | null) || null;
     setOpening(openingMin);
+    setOpeningDate(openingKey);
 
     const { data: entryData } = await supabase
       .from("time_entries")
@@ -127,15 +132,28 @@ export default function StundenkontoPage() {
       return;
     }
 
-    const now = new Date();
-    const todayKey = localDateKey(now);
+    const todayKey = localDateKey(new Date());
     const months: Record<string, { soll: number; ist: number; saldo: number }> = {};
     const order: string[] = [];
 
+    // Startpunkt: erste Buchung, bei gesetztem Stichtag fruehestens dieser Tag.
+    const openingStart = openingKey ? parseDateKey(openingKey) : null;
+    const startDate =
+      openingStart && openingStart > (firstDate as Date)
+        ? openingStart
+        : (firstDate as Date);
+
+    if (localDateKey(startDate) > todayKey) {
+      setRows([]);
+      setBalance(openingMin);
+      setLoading(false);
+      return;
+    }
+
     const cur = new Date(
-      (firstDate as Date).getFullYear(),
-      (firstDate as Date).getMonth(),
-      (firstDate as Date).getDate()
+      startDate.getFullYear(),
+      startDate.getMonth(),
+      startDate.getDate()
     );
     while (localDateKey(cur) <= todayKey) {
       const key = localDateKey(cur);
@@ -261,7 +279,11 @@ export default function StundenkontoPage() {
             {opening >= 0 ? "+" : ""}
             {formatMinutes(opening)}
           </p>
-          <p className="mt-1 text-xs text-slate-400">Anfangsguthaben</p>
+          <p className="mt-1 text-xs text-slate-400">
+            {openingDate
+              ? `Stand ${new Date(openingDate).toLocaleDateString("de-DE")}`
+              : "Anfangsguthaben"}
+          </p>
         </div>
       </div>
 
@@ -324,8 +346,8 @@ export default function StundenkontoPage() {
       <p className="mt-3 text-xs text-slate-400">
         Der Kontostand summiert Ist − Soll über alle Monate ab der ersten
         Buchung. Wochenenden, Feiertage und genehmigte Abwesenheiten sind
-        neutral. Ein Anfangsguthaben lässt sich optional pro Mitarbeiter
-        hinterlegen.
+        neutral. Ist ein Startsaldo mit Stichtag hinterlegt, beginnt die
+        Zählung erst an diesem Tag – alles davor steckt bereits im Startsaldo.
       </p>
     </Shell>
   );

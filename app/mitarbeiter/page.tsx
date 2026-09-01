@@ -8,11 +8,13 @@ import { holidayName } from "@/lib/holidays";
 import { dayFigures } from "@/lib/time";
 import {
   WorkModel,
-  countWorkDays,
   formatDays,
+  formatHm,
+  hoursPerWorkday,
   isWorkday,
+  minutesToDays,
   targetMinutesForWeekday,
-  vacationEntitlement,
+  vacationAccount,
   weeklyHours,
   workdayLabel,
 } from "@/lib/workmodel";
@@ -26,6 +28,8 @@ type Profile = {
   work_model_id: string | null;
   active?: boolean | null;
   entry_date?: string | null;
+  vacation_opening_balance?: number | null;
+  vacation_opening_date?: string | null;
 };
 type TimeEntry = {
   id: string;
@@ -92,10 +96,12 @@ export default function MitarbeiterPage() {
   const [selProfile, setSelProfile] = useState<Profile | null>(null);
   const [workModel, setWorkModel] = useState<WorkModel | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
+  // Urlaubskonto in Minuten (Stundenbasis, siehe lib/workmodel.ts)
   const [vac, setVac] = useState({
-    anspruch: 0,
-    full: 0,
-    aliquot: false,
+    budget: 0,
+    opening: 0,
+    hasOpening: false,
+    from: "",
     taken: 0,
     pending: 0,
     rest: 0,
@@ -218,33 +224,33 @@ export default function MitarbeiterPage() {
     }
     setRows(built);
 
-    // Urlaubskonto (laufendes Jahr, nur Typ Urlaub)
-    const isU = (v: Vacation) => (v.type || "Urlaub") === "Urlaub";
-    const thisYear = vacations.filter(
-      (v) => isU(v) && new Date(v.start_date).getFullYear() === YEAR_NOW
-    );
-    const taken = thisYear
-      .filter((v) => v.status === "approved")
-      .reduce((a, v) => a + countWorkDays(model, v.start_date, v.end_date), 0);
-    const pending = thisYear
-      .filter((v) => v.status === "pending")
-      .reduce((a, v) => a + countWorkDays(model, v.start_date, v.end_date), 0);
-    const ent = vacationEntitlement(
-      Number(prof?.vacation_days || 0),
-      prof?.entry_date || null,
-      YEAR_NOW
-    );
+    // Urlaubskonto in Stunden: Startsaldo + Ansprueche seither - Verbrauch
+    const account = vacationAccount({
+      model,
+      fullDays: Number(prof?.vacation_days || 0),
+      entryDate: prof?.entry_date || null,
+      openingMinutes: Number(prof?.vacation_opening_balance || 0),
+      openingDate: (prof?.vacation_opening_date as string | null) || null,
+      requests: vacations,
+    });
     setVac({
-      anspruch: ent.days,
-      full: ent.fullDays,
-      aliquot: ent.aliquot,
-      taken,
-      pending,
-      rest: ent.days - taken,
+      budget: account.openingMinutes + account.accruedMinutes,
+      opening: account.openingMinutes,
+      hasOpening: account.hasOpening,
+      from: account.fromKey,
+      taken: account.usedMinutes,
+      pending: account.pendingMinutes,
+      rest: account.restMinutes,
     });
 
     setLoading(false);
   }
+
+  // Minuten als Tagesangabe, sofern ein Zeitmodell zugeordnet ist.
+  const vacDays = (min: number) =>
+    hoursPerWorkday(workModel) > 0
+      ? `${formatDays(minutesToDays(workModel, min))} Tage`
+      : "Tage unbekannt";
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -365,24 +371,31 @@ export default function MitarbeiterPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Urlaubsanspruch</p>
+                <p className="text-xs text-slate-500">
+                  {vac.hasOpening ? "Urlaubsguthaben" : "Urlaubsanspruch"}
+                </p>
                 <p className="font-semibold text-slate-800">
-                  {formatDays(vac.anspruch)} Tage
-                  {vac.aliquot ? (
+                  {formatHm(vac.budget)} h
+                  {vac.hasOpening ? (
                     <span className="ml-1 text-xs font-normal text-amber-600">
-                      aliquot von {formatDays(vac.full)}
+                      inkl. Startsaldo {formatHm(vac.opening)}
                     </span>
                   ) : null}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Resturlaub {YEAR_NOW}</p>
+                <p className="text-xs text-slate-500">
+                  Resturlaub{vac.hasOpening ? "" : ` ${YEAR_NOW}`}
+                </p>
                 <p
                   className={`font-semibold ${
                     vac.rest >= 0 ? "text-emerald-600" : "text-red-600"
                   }`}
                 >
-                  {formatDays(vac.rest)} Tage
+                  {formatHm(vac.rest)} h
+                  <span className="ml-1 text-xs font-normal text-slate-400">
+                    {vacDays(vac.rest)}
+                  </span>
                 </p>
               </div>
             </div>
@@ -392,13 +405,15 @@ export default function MitarbeiterPage() {
           <div className="mt-4 grid gap-4 sm:grid-cols-4">
             {[
               {
-                l: "Anspruch",
-                v: formatDays(vac.anspruch),
-                h: vac.aliquot ? "aliquot" : "Tage",
+                l: vac.hasOpening ? "Guthaben gesamt" : "Anspruch",
+                v: formatHm(vac.budget),
+                h: vac.hasOpening
+                  ? `ab ${new Date(vac.from).toLocaleDateString("de-DE")}`
+                  : vacDays(vac.budget),
               },
-              { l: "Genommen", v: formatDays(vac.taken), h: "genehmigt" },
-              { l: "Beantragt", v: formatDays(vac.pending), h: "offen" },
-              { l: "Rest", v: formatDays(vac.rest), h: "verfügbar" },
+              { l: "Genommen", v: formatHm(vac.taken), h: vacDays(vac.taken) },
+              { l: "Beantragt", v: formatHm(vac.pending), h: vacDays(vac.pending) },
+              { l: "Rest", v: formatHm(vac.rest), h: vacDays(vac.rest) },
             ].map((s) => (
               <div
                 key={s.l}
