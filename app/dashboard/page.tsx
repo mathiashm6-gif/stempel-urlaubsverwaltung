@@ -8,8 +8,10 @@ import { Icon } from "../components/icons";
 import { holidayName } from "@/lib/holidays";
 import {
   WorkModel,
+  dayKey,
   hoursForWeekday,
   isWorkday,
+  parseDateKey,
   workdayLabel,
 } from "@/lib/workmodel";
 import { dayFigures, isPause } from "@/lib/time";
@@ -23,17 +25,31 @@ type TimeEntry = {
   kind?: string | null;
 };
 
+// Offene Arbeitsbuchungen (clock_out = null) eines Benutzers – unabhängig vom
+// Datum. Genau daraus ergibt sich, ob jemand "eingestempelt" ist; eine
+// Buchung, die gestern vergessen wurde, darf heute kein zweites Kommen erlauben.
+async function loadOpenWorkEntries(userId: string) {
+  const { data, error } = await supabase
+    .from("time_entries")
+    .select("*")
+    .eq("user_id", userId)
+    .is("clock_out", null)
+    .order("clock_in", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data || []) as TimeEntry[]).filter((e) => e.clock_in && !isPause(e));
+}
+
 export default function DashboardPage() {
   const router = useRouter();
 
   const [workModel, setWorkModel] = useState<WorkModel | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [activeEntry, setActiveEntry] = useState<TimeEntry | null>(null);
+  const [staleOpen, setStaleOpen] = useState<TimeEntry[]>([]);
+  const [busy, setBusy] = useState(false);
   const [nowMs, setNowMs] = useState(0);
   const [dayEnded, setDayEnded] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [selectedDate, setSelectedDate] = useState(dayKey(new Date()));
 
   async function loadEntries(dateValue = selectedDate) {
     const {
@@ -62,18 +78,21 @@ export default function DashboardPage() {
       setWorkModel(null);
     }
 
-    const startDate = new Date(dateValue);
+    // Tagesgrenzen lokal bilden (nicht über new Date("YYYY-MM-DD"), das ist UTC).
+    const startDate = parseDateKey(dateValue) || new Date();
     startDate.setHours(0, 0, 0, 0);
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + 1);
 
+    // Nach clock_in filtern, nicht nach created_at: nachgetragene Buchungen
+    // werden an einem anderen Tag angelegt, gehören aber zum Zieltag.
     const { data, error } = await supabase
       .from("time_entries")
       .select("*")
       .eq("user_id", user.id)
-      .gte("created_at", startDate.toISOString())
-      .lt("created_at", endDate.toISOString())
-      .order("created_at", { ascending: false });
+      .gte("clock_in", startDate.toISOString())
+      .lt("clock_in", endDate.toISOString())
+      .order("clock_in", { ascending: false });
 
     if (error) {
       alert(error.message);
@@ -83,15 +102,24 @@ export default function DashboardPage() {
     const loaded = (data || []) as TimeEntry[];
     setEntries(loaded);
 
-    const today = new Date().toISOString().split("T")[0];
-    if (dateValue === today) {
-      setActiveEntry(
-        loaded.find((e) => e.clock_out === null && !isPause(e)) || null
-      );
-    } else {
-      setActiveEntry(null);
-      setDayEnded(false);
+    // Offene Buchungen immer datumsunabhängig laden: nur so ist der Status
+    // "Eingestempelt" verlässlich, egal welcher Tag gerade angezeigt wird.
+    let open: TimeEntry[] = [];
+    try {
+      open = await loadOpenWorkEntries(user.id);
+    } catch (e) {
+      alert((e as Error).message);
+      return;
     }
+    const todayKey = dayKey(new Date());
+    const openToday = open.filter(
+      (e) => dayKey(new Date(e.clock_in as string)) === todayKey
+    );
+    setActiveEntry(openToday[openToday.length - 1] || null);
+    setStaleOpen(
+      open.filter((e) => dayKey(new Date(e.clock_in as string)) !== todayKey)
+    );
+    if (dateValue !== todayKey) setDayEnded(false);
   }
 
   useEffect(() => {
@@ -107,36 +135,123 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
+  function dateLabel(iso: string | null) {
+    if (!iso) return "";
+    return new Date(iso).toLocaleDateString("de-AT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
   async function handleClockIn() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user || activeEntry) return;
-    const today = new Date().toISOString().split("T")[0];
-    const { error } = await supabase
-      .from("time_entries")
-      .insert([{ user_id: user.id, clock_in: new Date().toISOString() }]);
-    if (error) {
-      alert(error.message);
-      return;
+    // Schutz gegen Doppelklick / zwei parallele Anfragen.
+    if (busy || activeEntry) return;
+    setBusy(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const today = dayKey(new Date());
+
+      // Serverstand prüfen, nicht den (möglicherweise veralteten) Bildschirm:
+      // ein zweiter Tab oder ein anderes Gerät kann längst eingestempelt haben.
+      const open = await loadOpenWorkEntries(user.id);
+      const openToday = open.filter(
+        (e) => dayKey(new Date(e.clock_in as string)) === today
+      );
+      if (openToday.length > 0) {
+        alert(
+          "Du bist bereits eingestempelt – die Anzeige wurde aktualisiert."
+        );
+        await loadEntries(today);
+        return;
+      }
+
+      // Offene Buchung von einem früheren Tag (Feierabend vergessen): mit
+      // Dauer 0 schließen, damit keine Phantomstunden entstehen. Die echte
+      // Geht-Zeit muss über die Zeitkorrektur nachgetragen werden.
+      const stale = open.filter(
+        (e) => dayKey(new Date(e.clock_in as string)) !== today
+      );
+      for (const s of stale) {
+        const { error } = await supabase
+          .from("time_entries")
+          .update({ clock_out: s.clock_in })
+          .eq("id", s.id)
+          .is("clock_out", null);
+        if (error) {
+          alert(
+            `Die offene Buchung vom ${dateLabel(
+              s.clock_in
+            )} konnte nicht geschlossen werden: ${error.message}`
+          );
+          return;
+        }
+      }
+      if (stale.length > 0) {
+        alert(
+          `Für den ${stale
+            .map((s) => dateLabel(s.clock_in))
+            .join(", ")} war noch eine Buchung offen (Feierabend vergessen). ` +
+            "Sie wurde mit 0:00 Std geschlossen – bitte die richtige Geht-Zeit " +
+            "über die Zeitkorrektur nachtragen."
+        );
+      }
+
+      const { error } = await supabase
+        .from("time_entries")
+        .insert([{ user_id: user.id, clock_in: new Date().toISOString() }]);
+      if (error) {
+        // 23505 = unique_violation: die Datenbank lässt je Benutzer nur eine
+        // offene Arbeitsbuchung zu (Index time_entries_one_open_per_user).
+        if (error.code === "23505" || /bereits eingestempelt/i.test(error.message)) {
+          alert("Du bist bereits eingestempelt – die Anzeige wurde aktualisiert.");
+        } else {
+          alert(error.message);
+        }
+        await loadEntries(today);
+        return;
+      }
+      setDayEnded(false);
+      setSelectedDate(today);
+      await loadEntries(today);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
     }
-    setDayEnded(false);
-    setSelectedDate(today);
-    await loadEntries(today);
   }
 
   async function closeActive(markEnded: boolean) {
-    if (!activeEntry) return;
-    const { error } = await supabase
-      .from("time_entries")
-      .update({ clock_out: new Date().toISOString() })
-      .eq("id", activeEntry.id);
-    if (error) {
-      alert(error.message);
-      return;
+    if (busy || !activeEntry) return;
+    setBusy(true);
+    try {
+      // Nur schließen, wenn die Buchung serverseitig noch offen ist – sonst
+      // hat ein anderer Tab bereits gestempelt und wir überschreiben nichts.
+      const { data, error } = await supabase
+        .from("time_entries")
+        .update({ clock_out: new Date().toISOString() })
+        .eq("id", activeEntry.id)
+        .is("clock_out", null)
+        .select("id");
+      if (error) {
+        alert(error.message);
+        return;
+      }
+      if (!data || data.length === 0) {
+        alert(
+          "Diese Buchung wurde bereits beendet – die Anzeige wurde aktualisiert."
+        );
+        await loadEntries();
+        return;
+      }
+      setDayEnded(markEnded);
+      await loadEntries();
+    } finally {
+      setBusy(false);
     }
-    setDayEnded(markEnded);
-    await loadEntries();
   }
 
   function durationMs(clockIn: string | null, clockOut: string | null) {
@@ -181,7 +296,7 @@ export default function DashboardPage() {
   const figures = dayFigures(entries, nowMs);
   const autoPauseMin = Math.round(figures.autoPauseMs / 60000);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = dayKey(new Date());
   const isToday = selectedDate === today;
   const hasWorkedToday = entries.length > 0;
   const isOnBreak = hasWorkedToday && !activeEntry && !dayEnded && isToday;
@@ -224,6 +339,19 @@ export default function DashboardPage() {
           Diesem Konto ist kein Zeitmodell zugewiesen. Die Sollzeit wird daher
           als 0:00 angezeigt – ein Admin kann in der Verwaltung ein Zeitmodell
           zuweisen.
+        </div>
+      )}
+
+      {staleOpen.length > 0 && (
+        <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-800">
+          <Icon name="info" className="mt-0.5 h-4 w-4 text-amber-600" />
+          <span>
+            Es ist noch eine Buchung vom{" "}
+            {staleOpen.map((s) => dateLabel(s.clock_in)).join(", ")} offen
+            (Feierabend vergessen?). Beim nächsten Kommen wird sie mit 0:00 Std
+            geschlossen – die richtige Geht-Zeit bitte über die Zeitkorrektur
+            nachtragen.
+          </span>
         </div>
       )}
 
@@ -281,8 +409,8 @@ export default function DashboardPage() {
 
         <div className="flex flex-wrap justify-center gap-3">
           <button
-            onClick={activeEntry ? undefined : handleClockIn}
-            disabled={!!activeEntry}
+            onClick={activeEntry || busy ? undefined : handleClockIn}
+            disabled={!!activeEntry || busy}
             className="inline-flex items-center gap-2 rounded-[11px] bg-emerald-600 px-6 py-3 text-[15px] font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="play" className="h-4 w-4" />
@@ -290,7 +418,7 @@ export default function DashboardPage() {
           </button>
           <button
             onClick={() => closeActive(false)}
-            disabled={!activeEntry}
+            disabled={!activeEntry || busy}
             className="inline-flex items-center gap-2 rounded-[11px] bg-amber-500 px-6 py-3 text-[15px] font-semibold text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="pause" className="h-4 w-4" />
@@ -298,7 +426,7 @@ export default function DashboardPage() {
           </button>
           <button
             onClick={() => closeActive(true)}
-            disabled={!activeEntry}
+            disabled={!activeEntry || busy}
             className="inline-flex items-center gap-2 rounded-[11px] bg-red-600 px-6 py-3 text-[15px] font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon name="stop" className="h-4 w-4" />
