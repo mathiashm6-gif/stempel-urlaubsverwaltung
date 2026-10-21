@@ -7,9 +7,11 @@ import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { loadSpecialDays } from "@/lib/holidays";
 import { notify } from "@/lib/notify";
+import VacationLedger from "../components/VacationLedger";
 import {
   WorkModel,
   countWorkDays,
+  dayKey,
   formatDays,
   formatHm,
   hoursPerWorkday,
@@ -187,14 +189,19 @@ export default function UrlaubPage() {
     "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
 
   return (
-    <Shell title="Urlaub" subtitle={`Urlaubskonto ${YEAR} und Abwesenheitsanträge`}>
+    <Shell title="Urlaub" subtitle="Urlaubskonto und Abwesenheitsanträge">
       <div className="grid gap-4 sm:grid-cols-4">
         {[
           {
-            l: account.hasOpening ? "Guthaben gesamt" : `Anspruch ${YEAR}`,
+            l:
+              account.hasOpening || account.accrualYears.length > 1
+                ? "Guthaben gesamt"
+                : `Anspruch ${YEAR}`,
             v: formatHm(budgetMinutes),
             h: account.hasOpening
               ? `Startsaldo ${formatHm(account.openingMinutes)} + Anspruch seither`
+              : account.accrualYears.length > 1
+              ? `Ansprüche ${account.accrualYears[0].year}–${YEAR}`
               : asDays(budgetMinutes),
             c: "text-slate-900",
           },
@@ -252,6 +259,8 @@ export default function UrlaubPage() {
         </p>
       </div>
 
+      <VacationLedger account={account} model={workModel} todayKey={dayKey(TODAY)} />
+
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-[15px] font-semibold text-slate-900">
           Mein Arbeitszeitmodell
@@ -291,7 +300,7 @@ export default function UrlaubPage() {
               }.`
             : `Jahresanspruch ${formatDays(
                 vacationDays
-              )} Tage. Gerechnet wird in Stunden: ein Urlaubstag verbraucht die Sollstunden des jeweiligen Wochentags${
+              )} Tage, gutgeschrieben jeweils am 1. Jänner (im Eintrittsjahr anteilig). Gerechnet wird in Stunden: ein Urlaubstag verbraucht die Sollstunden des jeweiligen Wochentags${
                 hoursPerDay > 0 ? ` (Ø ${formatDays(hoursPerDay)} h)` : ""
               }.`}
         </p>

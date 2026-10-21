@@ -266,13 +266,30 @@ export function formatDays(value: number) {
 // einheitliche Groesse mehr. Gefuehrt wird daher in Minuten; ein Urlaubstag
 // verbraucht genau die Sollstunden dieses Wochentags.
 //
-// Der Startsaldo (Uebernahme aus dem Altsystem) gilt zu einem Stichtag:
+// Das Konto laeuft fortlaufend, ohne Schnitt am Jahresende (Resturlaub wird
+// automatisch uebertragen):
 //
-//   Rest = Startsaldo + Ansprueche der Jahre NACH dem Stichtagsjahr
-//          - Verbrauch ab dem Stichtag
+//   Mit Startsaldo (Uebernahme aus dem Altsystem, gilt zu einem Stichtag):
+//     Rest = Startsaldo + Ansprueche der Jahre NACH dem Stichtagsjahr
+//            - Verbrauch ab dem Stichtag
 //
-// Ohne Stichtag bleibt es bei der reinen Jahresbetrachtung wie bisher.
+//   Ohne Startsaldo:
+//     Kontobeginn = Eintrittsdatum, fruehestens VACATION_ACCOUNT_START
+//     Rest = Ansprueche ab dem Jahr des Kontobeginns (Eintrittsjahr aliquot)
+//            - Verbrauch ab Kontobeginn
+//
+// Verbraucht wird immer der aelteste Anspruch zuerst. Daraus ergibt sich je
+// Jahr ein Rest und der Hinweis auf die Verjaehrung (§ 4 Abs. 5 UrlG: zwei
+// Jahre nach Ende des Urlaubsjahres). Es wird NIE automatisch etwas
+// ausgebucht – Verfall setzt voraus, dass der Arbeitgeber rechtzeitig
+// hingewiesen hat (EuGH), das prueft das Tool nicht.
 // ---------------------------------------------------------------------------
+
+/** Fruehester Kontobeginn ohne Startsaldo (Einfuehrung des Tools). */
+export const VACATION_ACCOUNT_START = "2026-01-01";
+
+/** Jahre nach Ende des Urlaubsjahres bis zur Verjaehrung. */
+export const VACATION_EXPIRY_YEARS = 2;
 
 /** Durchschnittliche Sollstunden je fixem Arbeitstag (Basis Tage <-> Stunden). */
 export function hoursPerWorkday(model: WorkModel | null | undefined) {
@@ -383,18 +400,32 @@ export type VacationAccount = {
   restMinutes: number;
   /** Erster gezaehlter Tag ("YYYY-MM-DD"). */
   fromKey: string;
-  /** Jahresansprueche, die auf den Startsaldo addiert wurden. */
+  /** Jahresansprueche seit Kontobeginn (mit Startsaldo: Jahre danach). */
   accrualYears: { year: number; minutes: number; days: number; aliquot: boolean }[];
-  /** true, wenn mit Startsaldo gerechnet wird (sonst reine Jahresbetrachtung). */
+  /** true, wenn mit Startsaldo gerechnet wird. */
   hasOpening: boolean;
+  /** Kontoauszug je Anspruch, aeltester zuerst verbraucht. */
+  lots: VacationLot[];
+};
+
+export type VacationLot = {
+  /** Urlaubsjahr, dem der Anspruch zugerechnet wird. */
+  year: number;
+  label: string;
+  /** Gutgeschriebene Minuten. */
+  minutes: number;
+  /** Davon verbraucht (aelteste zuerst). */
+  usedMinutes: number;
+  /** Noch offen. */
+  restMinutes: number;
+  /** Verjaehrung ("YYYY-12-31"). */
+  expiresKey: string;
 };
 
 /**
  * Urlaubskonto in Minuten.
  *
- * Mit Stichtag laeuft das Konto fortlaufend weiter: der uebernommene Saldo
- * plus die Jahresansprueche der Folgejahre, minus alles, was ab dem Stichtag
- * genehmigt wurde. Ohne Stichtag zaehlt nur das laufende Kalenderjahr.
+ * Fortlaufend ohne Jahresschnitt, siehe Abschnittskopf oben.
  */
 export function vacationAccount(input: {
   model: WorkModel | null | undefined;
@@ -421,29 +452,28 @@ export function vacationAccount(input: {
 
   const accrualYears: VacationAccount["accrualYears"] = [];
   let fromKey: string;
+  let firstAccrualYear: number;
 
   if (openingDate) {
     // Der Startsaldo enthaelt den Anspruch seines eigenen Jahres bereits.
-    const openingYear = (parseDateKey(openingDate) || today).getFullYear();
-    for (let y = openingYear + 1; y <= year; y++) {
-      const ent = entitlementMinutes(model, fullDays, entryDate, y, exitDate);
-      accrualYears.push({
-        year: y,
-        minutes: ent.minutes,
-        days: ent.days,
-        aliquot: ent.aliquot,
-      });
-    }
+    firstAccrualYear = (parseDateKey(openingDate) || today).getFullYear() + 1;
     fromKey = openingDate;
   } else {
-    const ent = entitlementMinutes(model, fullDays, entryDate, year, exitDate);
+    // Kontobeginn: Eintritt, fruehestens Einfuehrung des Tools.
+    const entryKey = entryDate ? dayKey(parseDateKey(entryDate) || today) : null;
+    fromKey =
+      entryKey && entryKey > VACATION_ACCOUNT_START ? entryKey : VACATION_ACCOUNT_START;
+    firstAccrualYear = Number(fromKey.slice(0, 4));
+  }
+
+  for (let y = firstAccrualYear; y <= year; y++) {
+    const ent = entitlementMinutes(model, fullDays, entryDate, y, exitDate);
     accrualYears.push({
-      year,
+      year: y,
       minutes: ent.minutes,
       days: ent.days,
       aliquot: ent.aliquot,
     });
-    fromKey = `${year}-01-01`;
   }
 
   const accrued = accrualYears.reduce((a, y) => a + y.minutes, 0);
@@ -460,6 +490,32 @@ export function vacationAccount(input: {
   const used = sum("approved");
   const pending = sum("pending");
 
+  // Kontoauszug: aeltester Anspruch wird zuerst verbraucht.
+  const raw: { year: number; label: string; minutes: number }[] = [];
+  if (openingDate) {
+    // Der Startsaldo kann Resturlaub aus dem Vorjahr enthalten, deshalb
+    // vorsichtshalber dem Vorjahr zugerechnet (frueheste moegliche Verjaehrung).
+    const oy = (parseDateKey(openingDate) || today).getFullYear();
+    raw.push({ year: oy - 1, label: `Startsaldo ${openingDate.slice(8, 10)}.${openingDate.slice(5, 7)}.${oy}`, minutes: opening });
+  }
+  accrualYears.forEach((a) =>
+    raw.push({ year: a.year, label: `Anspruch ${a.year}`, minutes: a.minutes })
+  );
+  let toUse = used;
+  const lots: VacationLot[] = raw.map((r) => {
+    const avail = Math.max(0, r.minutes);
+    const take = Math.min(avail, Math.max(0, toUse));
+    toUse -= take;
+    return {
+      year: r.year,
+      label: r.label,
+      minutes: r.minutes,
+      usedMinutes: take,
+      restMinutes: r.minutes - take,
+      expiresKey: `${r.year + VACATION_EXPIRY_YEARS}-12-31`,
+    };
+  });
+
   return {
     openingMinutes: opening,
     openingDate,
@@ -470,5 +526,6 @@ export function vacationAccount(input: {
     fromKey,
     accrualYears,
     hasOpening: !!openingDate,
+    lots,
   };
 }

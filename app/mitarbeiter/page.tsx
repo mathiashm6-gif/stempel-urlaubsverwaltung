@@ -6,6 +6,9 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { holidayName, loadSpecialDays, shortDayLabel } from "@/lib/holidays";
 import { dayFigures } from "@/lib/time";
+import { loadAccounts } from "@/lib/accounts";
+import { ZaAccount } from "@/lib/zaccount";
+import VacationLedger from "../components/VacationLedger";
 import {
   WorkModel,
   formatDays,
@@ -14,6 +17,8 @@ import {
   isWorkday,
   minutesToDays,
   targetMinutesForDate,
+  VacationAccount,
+  dayKey,
   vacationAccount,
   weeklyHours,
   workdayLabel,
@@ -64,7 +69,6 @@ const MONTH_NAMES = [
   "Jänner", "Februar", "März", "April", "Mai", "Juni",
   "Juli", "August", "September", "Oktober", "November", "Dezember",
 ];
-const YEAR_NOW = new Date().getFullYear();
 
 function fmt(min: number) {
   const s = min < 0 ? "-" : "";
@@ -107,6 +111,8 @@ export default function MitarbeiterPage() {
     pending: 0,
     rest: 0,
   });
+  const [vacAccount, setVacAccount] = useState<VacationAccount | null>(null);
+  const [za, setZa] = useState<ZaAccount | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function init() {
@@ -246,6 +252,11 @@ export default function MitarbeiterPage() {
       pending: account.pendingMinutes,
       rest: account.restMinutes,
     });
+    setVacAccount(account);
+
+    // ZA-Kontostand ueber den gesamten Zeitraum (nicht nur den Monat).
+    const accs = await loadAccounts(supabase, [selectedId]);
+    setZa(accs[selectedId]?.za || null);
 
     setLoading(false);
   }
@@ -389,7 +400,7 @@ export default function MitarbeiterPage() {
               </div>
               <div>
                 <p className="text-xs text-slate-500">
-                  Resturlaub{vac.hasOpening ? "" : ` ${YEAR_NOW}`}
+                  Resturlaub
                 </p>
                 <p
                   className={`font-semibold ${
@@ -406,31 +417,61 @@ export default function MitarbeiterPage() {
           </div>
 
           {/* Urlaubskonto */}
-          <div className="mt-4 grid gap-4 sm:grid-cols-4">
+          <div className="mt-4 grid gap-4 sm:grid-cols-5">
             {[
               {
-                l: vac.hasOpening ? "Guthaben gesamt" : "Anspruch",
+                l: "ZA-Stand",
+                v: za
+                  ? `${za.balanceMinutes > 0 ? "+" : ""}${formatHm(za.balanceMinutes)}`
+                  : "–",
+                h: za
+                  ? `Monat ${za.currentMonthMinutes >= 0 ? "+" : ""}${formatHm(
+                      za.currentMonthMinutes
+                    )}`
+                  : "Zeitausgleich",
+                c: za && za.balanceMinutes < 0 ? "text-red-600" : "text-emerald-600",
+              },
+              {
+                l:
+                  vac.hasOpening || (vacAccount?.accrualYears.length || 0) > 1
+                    ? "Urlaub gesamt"
+                    : "Urlaubsanspruch",
                 v: formatHm(vac.budget),
-                h: vac.hasOpening
-                  ? `ab ${new Date(vac.from).toLocaleDateString("de-DE")}`
-                  : vacDays(vac.budget),
+                h: `seit ${new Date(vac.from).toLocaleDateString("de-DE")}`,
               },
               { l: "Genommen", v: formatHm(vac.taken), h: vacDays(vac.taken) },
               { l: "Beantragt", v: formatHm(vac.pending), h: vacDays(vac.pending) },
-              { l: "Rest", v: formatHm(vac.rest), h: vacDays(vac.rest) },
+              {
+                l: "Resturlaub",
+                v: formatHm(vac.rest),
+                h: vacDays(vac.rest),
+                c: vac.rest >= 0 ? "text-emerald-600" : "text-red-600",
+              },
             ].map((s) => (
               <div
                 key={s.l}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               >
                 <p className="text-[12.5px] text-slate-500">{s.l}</p>
-                <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
+                <p
+                  className={`mt-1 text-2xl font-bold tracking-tight tabular-nums ${
+                    s.c || "text-slate-900"
+                  }`}
+                >
                   {s.v}
                 </p>
                 <p className="text-xs text-slate-400">{s.h}</p>
               </div>
             ))}
           </div>
+
+          {vacAccount && (
+            <VacationLedger
+              account={vacAccount}
+              model={workModel}
+              todayKey={dayKey(new Date())}
+            />
+          )}
 
           {/* Monatsjournal */}
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

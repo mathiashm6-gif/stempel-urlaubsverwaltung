@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName, loadSpecialDays } from "@/lib/holidays";
+import { loadAccounts } from "@/lib/accounts";
+import { formatHm } from "@/lib/workmodel";
 import {
   WorkModel,
   isWorkday,
@@ -41,6 +43,8 @@ type TeamRow = {
   present: boolean;
   todayMin: number;
   saldoMin: number;
+  zaMin: number | null;
+  vacRestMin: number | null;
 };
 
 const COLORS = [
@@ -180,8 +184,24 @@ export default function TeamPage() {
         present,
         todayMin: Math.max(0, Math.round(todayMin)),
         saldoMin,
+        zaMin: null,
+        vacRestMin: null,
       };
     });
+
+    // Gesamtstaende ueber den ganzen Zeitraum (gleiche Rechnung wie
+    // Stundenkonto und Urlaubsseite).
+    try {
+      const accs = await loadAccounts(supabase);
+      built.forEach((r) => {
+        const a = accs[r.id];
+        if (!a) return;
+        r.zaMin = a.za.balanceMinutes;
+        r.vacRestMin = a.vacation.restMinutes;
+      });
+    } catch (err) {
+      console.warn("Kontostände nicht geladen:", err);
+    }
 
     setRows(built);
     setLoading(false);
@@ -245,6 +265,8 @@ export default function TeamPage() {
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5 text-right">Heute</th>
                 <th className="px-4 py-2.5 text-right">Saldo Monat</th>
+                <th className="px-4 py-2.5 text-right">ZA-Stand</th>
+                <th className="px-4 py-2.5 text-right">Resturlaub</th>
               </tr>
             </thead>
             <tbody>
@@ -291,11 +313,24 @@ export default function TeamPage() {
                       {formatMinutes(r.saldoMin)}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                    {r.zaMin === null ? (
+                      "–"
+                    ) : (
+                      <span className={r.zaMin >= 0 ? "text-emerald-600" : "text-red-600"}>
+                        {r.zaMin > 0 ? "+" : ""}
+                        {formatHm(r.zaMin)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {r.vacRestMin === null ? "–" : `${formatHm(r.vacRestMin)} h`}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
                     Keine Mitarbeiter gefunden.
                   </td>
                 </tr>
@@ -308,8 +343,9 @@ export default function TeamPage() {
       <p className="mt-3 text-xs text-slate-400">
         Anwesend bedeutet eine aktuell offene Stempelung. Pause und Feierabend
         lassen sich aus den gespeicherten Buchungen nicht unterscheiden und
-        zählen beide als abwesend. Saldo = Ist − Soll des laufenden Monats bis
-        heute (Abwesenheiten neutral).
+        zählen beide als abwesend. Saldo Monat = Ist − Soll des laufenden Monats bis
+        heute (Abwesenheiten neutral). ZA-Stand = gesamtes Zeitausgleichskonto inkl.
+        Startsaldo, Resturlaub = fortlaufendes Urlaubskonto inkl. Übertrag.
       </p>
     </Shell>
   );

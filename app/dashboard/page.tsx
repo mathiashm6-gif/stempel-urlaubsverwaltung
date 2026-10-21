@@ -9,13 +9,18 @@ import { dayTargetFactor, loadSpecialDays } from "@/lib/holidays";
 import {
   WorkModel,
   dayKey,
+  formatDays,
+  formatHm,
   hoursForWeekday,
+  minutesToDays,
   isWorkday,
   parseDateKey,
   workdayLabel,
 } from "@/lib/workmodel";
 import { dayFigures, isPause } from "@/lib/time";
 import { notify } from "@/lib/notify";
+import { loadAccounts } from "@/lib/accounts";
+import Link from "next/link";
 
 
 type TimeEntry = {
@@ -51,6 +56,33 @@ export default function DashboardPage() {
   const [nowMs, setNowMs] = useState(0);
   const [dayEnded, setDayEnded] = useState(false);
   const [selectedDate, setSelectedDate] = useState(dayKey(new Date()));
+  // Eigener ZA-Stand und Resturlaub (gleiche Rechnung wie Stundenkonto/Urlaub).
+  const [summary, setSummary] = useState<{
+    za: number;
+    vacRest: number;
+    vacDays: string;
+  } | null>(null);
+
+  async function loadSummary() {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const accs = await loadAccounts(supabase, [user.id]);
+      const a = accs[user.id];
+      if (!a) return;
+      setSummary({
+        za: a.za.balanceMinutes,
+        vacRest: a.vacation.restMinutes,
+        vacDays: a.model
+          ? `${formatDays(minutesToDays(a.model, a.vacation.restMinutes))} Tage`
+          : "",
+      });
+    } catch (err) {
+      console.warn("Kontostände nicht geladen:", err);
+    }
+  }
 
   async function loadEntries(dateValue = selectedDate) {
     await loadSpecialDays(supabase);
@@ -123,6 +155,11 @@ export default function DashboardPage() {
     );
     if (dateValue !== todayKey) setDayEnded(false);
   }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadSummary();
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -258,6 +295,7 @@ export default function DashboardPage() {
       }
       setDayEnded(markEnded);
       await loadEntries();
+      if (markEnded) void loadSummary();
     } finally {
       setBusy(false);
     }
@@ -403,6 +441,42 @@ export default function DashboardPage() {
           </p>
         </div>
       </div>
+
+      {summary && (
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Link
+            href="/stundenkonto"
+            className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-200"
+          >
+            <p className="text-[12.5px] text-slate-500">Mein Zeitausgleich</p>
+            <p
+              className={`mt-1.5 text-2xl font-bold tracking-tight tabular-nums ${
+                summary.za >= 0 ? "text-emerald-600" : "text-red-600"
+              }`}
+            >
+              {summary.za > 0 ? "+" : ""}
+              {formatHm(summary.za)} Std
+            </p>
+            <p className="mt-1 text-xs text-slate-400">Stand inkl. heute · Details im Stundenkonto</p>
+          </Link>
+          <Link
+            href="/urlaub"
+            className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-200"
+          >
+            <p className="text-[12.5px] text-slate-500">Mein Resturlaub</p>
+            <p
+              className={`mt-1.5 text-2xl font-bold tracking-tight tabular-nums ${
+                summary.vacRest >= 0 ? "text-slate-900" : "text-red-600"
+              }`}
+            >
+              {formatHm(summary.vacRest)} Std
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              {summary.vacDays ? `≈ ${summary.vacDays} · ` : ""}Details unter Urlaub
+            </p>
+          </Link>
+        </div>
+      )}
 
       <div className="mt-4 rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
         <p className="text-[12.5px] font-semibold uppercase tracking-wide text-slate-400">

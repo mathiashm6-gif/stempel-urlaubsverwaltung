@@ -6,9 +6,11 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { notify } from "@/lib/notify";
+import { loadAccounts } from "@/lib/accounts";
 import {
   WEEKDAYS,
   WorkModel,
+  dayKey,
   daysToMinutes,
   formatDays,
   formatHm,
@@ -16,6 +18,7 @@ import {
   minutesToDays,
   parseHm,
   vacationEntitlement,
+  vacationMinutes,
   weeklyHours,
   workdayLabel,
 } from "@/lib/workmodel";
@@ -138,6 +141,13 @@ export default function AdminPage() {
   const [editVacOpening, setEditVacOpening] = useState("");
   const [editVacOpeningUnit, setEditVacOpeningUnit] = useState<"h" | "d">("h");
   const [editVacOpeningDate, setEditVacOpeningDate] = useState("");
+  // Vorschlag fuer neue Startsalden beim Wechsel des Zeitmodells: Stand mit
+  // dem bisherigen Modell, damit nichts rueckwirkend umgerechnet wird.
+  const [modelSwitch, setModelSwitch] = useState<{
+    za: number;
+    vac: number;
+    date: string;
+  } | null>(null);
 
   // Zeitmodelle: "new" = neues Modell, sonst die id des bearbeiteten Modells
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
@@ -335,6 +345,51 @@ export default function AdminPage() {
     );
     setEditVacOpeningUnit("h");
     setEditVacOpeningDate(profile.vacation_opening_date || "");
+    setModelSwitch(null);
+    if (profile.work_model_id) void prepareModelSwitch(profile);
+  }
+
+  async function prepareModelSwitch(profile: Profile) {
+    try {
+      const todayKey = dayKey(new Date());
+      const endOfYesterday = new Date();
+      endOfYesterday.setHours(0, 0, 0, 0);
+      endOfYesterday.setMilliseconds(-1);
+      const accs = await loadAccounts(supabase, [profile.id], {
+        zaAsOf: endOfYesterday,
+      });
+      const a = accs[profile.id];
+      if (!a) return;
+      // Bereits genehmigter Urlaub ab heute ist im Rest schon abgezogen; nach
+      // dem Wechsel wird er mit dem neuen Modell erneut gezaehlt -> zurueckgeben.
+      const future = vacations
+        .filter(
+          (v) =>
+            v.user_id === profile.id &&
+            v.status === "approved" &&
+            (v.type || "Urlaub") === "Urlaub"
+        )
+        .reduce(
+          (sum, v) => sum + vacationMinutes(a.model, v.start_date, v.end_date, todayKey),
+          0
+        );
+      setModelSwitch({
+        za: a.za.balanceMinutes,
+        vac: a.vacation.restMinutes + future,
+        date: todayKey,
+      });
+    } catch (err) {
+      console.warn("Kontostände nicht geladen:", err);
+    }
+  }
+
+  function applyModelSwitch() {
+    if (!modelSwitch) return;
+    setEditOpening(formatHm(modelSwitch.za));
+    setEditOpeningDate(modelSwitch.date);
+    setEditVacOpening(formatHm(modelSwitch.vac));
+    setEditVacOpeningUnit("h");
+    setEditVacOpeningDate(modelSwitch.date);
   }
 
   async function saveProfile() {
@@ -817,6 +872,45 @@ export default function AdminPage() {
               />
             </div>
           </div>
+
+          {editingProfile.work_model_id &&
+            editWorkModelId !== (editingProfile.work_model_id || "") && (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-800">
+                <p className="font-semibold">Zeitmodell wird geändert</p>
+                <p className="mt-1">
+                  Ohne neue Startsalden rechnet das Tool auch vergangene Tage mit dem
+                  neuen Modell – ZA-Stand und Resturlaub würden sich rückwirkend
+                  verschieben. Empfehlung: die Stände mit dem bisherigen Modell als
+                  Startsalden zum heutigen Tag übernehmen.
+                </p>
+                {modelSwitch ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <span>
+                      ZA bis gestern{" "}
+                      <b>
+                        {modelSwitch.za > 0 ? "+" : ""}
+                        {formatHm(modelSwitch.za)} h
+                      </b>{" "}
+                      · Resturlaub <b>{formatHm(modelSwitch.vac)} h</b>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={applyModelSwitch}
+                      className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+                    >
+                      Als Startsalden übernehmen
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs">Stände werden berechnet…</p>
+                )}
+                <p className="mt-2 text-xs text-amber-700">
+                  Danach wie gewohnt speichern. Vorsicht bei einem Wechsel mitten in
+                  einem Arbeitstag: der heutige Tag wird bereits mit dem neuen Modell
+                  gerechnet.
+                </p>
+              </div>
+            )}
 
           <h4 className="mt-6 text-[13px] font-semibold text-slate-900">
             Startsalden aus dem Altsystem

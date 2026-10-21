@@ -5,29 +5,9 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { holidayName, loadSpecialDays } from "@/lib/holidays";
-import {
-  WorkModel,
-  isWorkday,
-  parseDateKey,
-  targetMinutesForDate,
-} from "@/lib/workmodel";
+import { loadAccounts } from "@/lib/accounts";
 import { downloadCsv } from "@/lib/csv";
-import { netWorkedMsByDay } from "@/lib/time";
 
-type TimeEntry = {
-  id: string;
-  user_id: string;
-  clock_in: string | null;
-  clock_out: string | null;
-  kind?: string | null;
-};
-type VacationRequest = {
-  user_id: string;
-  start_date: string;
-  end_date: string;
-  status: string;
-};
 type MonthRow = {
   key: string; // YYYY-MM
   label: string;
@@ -47,11 +27,6 @@ function formatMinutes(min: number) {
   const abs = Math.abs(Math.round(min));
   return `${sign}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")}`;
 }
-function localDateKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-}
 
 export default function StundenkontoPage() {
   const router = useRouter();
@@ -64,7 +39,6 @@ export default function StundenkontoPage() {
   const [balance, setBalance] = useState(0);
 
   async function load() {
-    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -74,133 +48,32 @@ export default function StundenkontoPage() {
     }
     setLoading(true);
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    let model: WorkModel | null = null;
-    if (profile?.work_model_id) {
-      const { data: wm } = await supabase
-        .from("work_models")
-        .select("*")
-        .eq("id", profile.work_model_id)
-        .single();
-      model = (wm as WorkModel) || null;
-    }
-    setHasModel(!!model);
-    // Startsaldo in Minuten samt Stichtag. Mit Stichtag zaehlt das Konto erst
-    // ab diesem Tag – der Zeitraum davor steckt bereits im Startsaldo.
-    const openingMin = Number(profile?.opening_balance || 0);
-    const openingKey = (profile?.opening_balance_date as string | null) || null;
-    setOpening(openingMin);
-    setOpeningDate(openingKey);
-
-    const { data: entryData } = await supabase
-      .from("time_entries")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("clock_in", { ascending: true });
-
-    const { data: vacData } = await supabase
-      .from("vacation_requests")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("status", "approved");
-
-    const entries = (entryData || []) as TimeEntry[];
-    const vacations = (vacData || []) as VacationRequest[];
-
-    // Ist-Minuten je Tag inkl. automatischer Pausenverrechnung (§ 11 AZG)
-    const workedByDay = netWorkedMsByDay(
-      entries,
-      (iso) => localDateKey(new Date(iso)),
-      Date.now()
-    );
-
-    let firstDate: Date | null = null;
-    entries.forEach((e) => {
-      if (!e.clock_in) return;
-      const inDate = new Date(e.clock_in);
-      if (!firstDate || inDate < firstDate) firstDate = inDate;
-    });
-
-    if (!firstDate) {
-      setRows([]);
-      setBalance(openingMin);
+    // Gemeinsame Rechnung (lib/zaccount.ts): Startsaldo + Ist - Soll je Tag
+    // ab Kontobeginn, Abwesenheiten neutral, freie Tage voll als Plus.
+    const accounts = await loadAccounts(supabase, [user.id]);
+    const acc = accounts[user.id];
+    if (!acc) {
       setLoading(false);
       return;
     }
-
-    const todayKey = localDateKey(new Date());
-    const months: Record<string, { soll: number; ist: number; saldo: number }> = {};
-    const order: string[] = [];
-
-    // Startpunkt: erste Buchung, bei gesetztem Stichtag fruehestens dieser Tag.
-    const openingStart = openingKey ? parseDateKey(openingKey) : null;
-    const startDate =
-      openingStart && openingStart > (firstDate as Date)
-        ? openingStart
-        : (firstDate as Date);
-
-    if (localDateKey(startDate) > todayKey) {
-      setRows([]);
-      setBalance(openingMin);
-      setLoading(false);
-      return;
-    }
-
-    const cur = new Date(
-      startDate.getFullYear(),
-      startDate.getMonth(),
-      startDate.getDate()
+    setHasModel(!!acc.model);
+    setOpening(acc.za.openingMinutes);
+    setOpeningDate(acc.za.openingDate);
+    setRows(
+      acc.za.months.map((m) => {
+        const y = Number(m.key.slice(0, 4));
+        const mo = Number(m.key.slice(5, 7));
+        return {
+          key: m.key,
+          label: `${MONTH_NAMES[mo - 1]} ${y}`,
+          soll: m.soll,
+          ist: m.ist,
+          saldo: m.saldo,
+          running: m.running,
+        };
+      })
     );
-    while (localDateKey(cur) <= todayKey) {
-      const key = localDateKey(cur);
-      const mKey = key.slice(0, 7);
-      if (!months[mKey]) {
-        months[mKey] = { soll: 0, ist: 0, saldo: 0 };
-        order.push(mKey);
-      }
-      const weekday = cur.getDay();
-      const isWeekend = !isWorkday(model, weekday);
-      const holiday = !isWeekend ? holidayName(key) : null;
-      const target = isWeekend || holiday ? 0 : targetMinutesForDate(model, key);
-      const worked = Math.max(0, Math.round((workedByDay[key] || 0) / 60000));
-
-      let absence = false;
-      if (!holiday) {
-        vacations.forEach((v) => {
-          if (key >= v.start_date && key <= v.end_date && !isWeekend)
-            absence = true;
-        });
-      }
-
-      months[mKey].ist += worked;
-      months[mKey].soll += target;
-      if (!absence) months[mKey].saldo += worked - target;
-
-      cur.setDate(cur.getDate() + 1);
-    }
-
-    let running = openingMin;
-    const built: MonthRow[] = order.map((mKey) => {
-      running += months[mKey].saldo;
-      const y = Number(mKey.slice(0, 4));
-      const m = Number(mKey.slice(5, 7));
-      return {
-        key: mKey,
-        label: `${MONTH_NAMES[m - 1]} ${y}`,
-        soll: months[mKey].soll,
-        ist: months[mKey].ist,
-        saldo: months[mKey].saldo,
-        running,
-      };
-    });
-
-    setRows(built);
-    setBalance(running);
+    setBalance(acc.za.balanceMinutes);
     setLoading(false);
   }
 
