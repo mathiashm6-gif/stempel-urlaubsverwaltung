@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { holidayName } from "@/lib/holidays";
+import { holidayName, loadSpecialDays, shortDayLabel } from "@/lib/holidays";
 import {
   WorkModel,
   isWorkday,
-  targetMinutesForWeekday,
+  targetMinutesForDate,
 } from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
 import { dayFigures } from "@/lib/time";
@@ -48,6 +48,7 @@ type JournalRow = {
   running: boolean;
   absence: string | null;
   holiday: string | null;
+  shortDay: string | null;
 };
 
 const DAY_NAMES = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -87,6 +88,7 @@ export default function JournalPage() {
 
 
   async function loadJournal() {
+    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -176,7 +178,8 @@ export default function JournalPage() {
       }
 
       const fig = dayFigures(dayEntries, Date.now());
-      const targetMin = holiday ? 0 : targetMinutesForWeekday(model, weekday);
+      const targetMin = holiday ? 0 : targetMinutesForDate(model, iso);
+      const shortDay = !isWeekend && !holiday ? shortDayLabel(iso) : null;
       const workedMin = Math.round(fig.workedMs / 60000);
 
       built.push({
@@ -197,6 +200,7 @@ export default function JournalPage() {
         running: fig.running,
         absence,
         holiday,
+        shortDay,
       });
     }
 
@@ -234,6 +238,8 @@ export default function JournalPage() {
         ? `Feiertag (${r.holiday})`
         : r.absence
         ? r.absence
+        : r.shortDay
+        ? r.shortDay
         : r.isWeekend
         ? "Wochenende"
         : r.isFuture
@@ -352,6 +358,14 @@ export default function JournalPage() {
                         {r.dateLabel}
                       </span>{" "}
                       <span className="text-slate-400">{r.dayName}</span>
+                      {r.shortDay && (
+                        <span
+                          title={r.shortDay}
+                          className="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700"
+                        >
+                          {r.shortDay}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5">{r.komm || "–"}</td>
                     <td className="px-4 py-2.5">

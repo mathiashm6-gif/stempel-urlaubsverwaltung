@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
+import { loadSpecialDays } from "@/lib/holidays";
+import { notify } from "@/lib/notify";
 import {
   WorkModel,
   countWorkDays,
@@ -67,6 +69,7 @@ export default function UrlaubPage() {
     vacationMinutes(workModel, start, end);
 
   async function loadData() {
+    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -127,19 +130,26 @@ export default function UrlaubPage() {
       alert("Das Enddatum darf nicht vor dem Startdatum liegen.");
       return;
     }
-    const { error } = await supabase.from("vacation_requests").insert([
-      {
-        user_id: user.id,
-        type,
-        start_date: startDate,
-        end_date: endDate,
-        status: "pending",
-      },
-    ]);
+    const { data: inserted, error } = await supabase
+      .from("vacation_requests")
+      .insert([
+        {
+          user_id: user.id,
+          type,
+          start_date: startDate,
+          end_date: endDate,
+          status: "pending",
+        },
+      ])
+      .select("id");
     if (error) {
       alert(error.message);
       return;
     }
+    void notify(
+      "vacation_requested",
+      (inserted || []).map((r: { id: number }) => r.id)
+    );
     setType("Urlaub");
     setStartDate("");
     setEndDate("");

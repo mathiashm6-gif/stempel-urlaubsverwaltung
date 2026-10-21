@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { isPause } from "@/lib/time";
+import { notify } from "@/lib/notify";
 
 type TimeEntry = {
   id: string;
@@ -194,11 +195,18 @@ export default function KorrekturPage() {
       requested_clock_out: toISO(selectedDate, seg.end),
       reason: antragReason || null,
     }));
-    const { error } = await supabase.from("time_corrections").insert(rows);
+    const { data: inserted, error } = await supabase
+      .from("time_corrections")
+      .insert(rows)
+      .select("id");
     if (error) {
       alert(error.message);
       return;
     }
+    void notify(
+      "correction_requested",
+      (inserted || []).map((r: { id: number }) => r.id)
+    );
     setSegments([]);
     setAntragReason("");
     setDraftKind("work");
@@ -238,7 +246,7 @@ export default function KorrekturPage() {
         alert("Bitte Start und Ende der Pause angeben.");
         return;
       }
-      const { error } = await supabase.from("time_corrections").insert([
+      const { data: inserted, error } = await supabase.from("time_corrections").insert([
         {
           user_id: uid,
           entry_id: action.entry.id,
@@ -249,13 +257,17 @@ export default function KorrekturPage() {
           requested_clock_out: editOut ? toISO(selectedDate, editOut) : null,
           reason: editReason || null,
         },
-      ]);
+      ]).select("id");
       if (error) {
         alert(error.message);
         return;
       }
+      void notify(
+        "correction_requested",
+        (inserted || []).map((r: { id: number }) => r.id)
+      );
     } else {
-      const { error } = await supabase.from("time_corrections").insert([
+      const { data: inserted, error } = await supabase.from("time_corrections").insert([
         {
           user_id: uid,
           entry_id: action.entry.id,
@@ -265,11 +277,15 @@ export default function KorrekturPage() {
           requested_clock_out: action.entry.clock_out,
           reason: editReason || null,
         },
-      ]);
+      ]).select("id");
       if (error) {
         alert(error.message);
         return;
       }
+      void notify(
+        "correction_requested",
+        (inserted || []).map((r: { id: number }) => r.id)
+      );
     }
     setAction(null);
     await loadData(selectedDate);

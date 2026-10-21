@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { holidayName } from "@/lib/holidays";
+import { holidayName, loadSpecialDays } from "@/lib/holidays";
 import {
   WorkModel,
   isWorkday,
-  targetMinutesForWeekday,
+  targetMinutesForDate,
 } from "@/lib/workmodel";
 import { isPause, netWorkedMsByDay } from "@/lib/time";
 
@@ -72,6 +72,7 @@ export default function TeamPage() {
   const [rows, setRows] = useState<TeamRow[]>([]);
 
   async function loadTeam() {
+    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -165,7 +166,7 @@ export default function TeamPage() {
         }
         if (absence) continue;
         const target =
-          isWeekend || holiday ? 0 : targetMinutesForWeekday(model, weekday);
+          isWeekend || holiday ? 0 : targetMinutesForDate(model, key);
         const worked = Math.max(0, Math.round((workedByDay[key] || 0) / 60000));
         saldoMin += worked - target;
       }

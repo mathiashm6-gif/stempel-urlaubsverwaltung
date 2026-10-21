@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { holidayName } from "@/lib/holidays";
+import { holidayName, loadSpecialDays, shortDayLabel } from "@/lib/holidays";
 
 type Profile = { id: string; email: string; full_name: string | null };
 type Vacation = {
@@ -50,6 +50,7 @@ export default function KalenderPage() {
   const [month, setMonth] = useState(now.getMonth());
 
   async function load() {
+    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -181,7 +182,9 @@ export default function KalenderPage() {
                 const iso = `${year}-${pad(month + 1)}-${pad(d)}`;
                 const wd = new Date(year, month, d).getDay();
                 const isWeekend = wd === 0 || wd === 6;
-                const hol = !isWeekend ? holidayName(iso) : null;
+                const hol = !isWeekend
+                  ? holidayName(iso) || shortDayLabel(iso)
+                  : null;
                 const abs = absentees(iso);
                 const isToday = iso === todayKey;
                 return (

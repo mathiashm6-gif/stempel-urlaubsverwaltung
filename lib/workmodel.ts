@@ -10,7 +10,7 @@
 // Ist einem Mitarbeiter kein Modell zugeordnet, wird ersatzweise die klassische
 // Woche Mo-Fr angenommen, damit bestehende Daten nicht kippen.
 
-import { isHoliday } from "./holidays";
+import { dayTargetFactor, isHoliday } from "./holidays";
 
 export type WorkModel = {
   id: string;
@@ -74,6 +74,21 @@ export function targetMinutesForWeekday(model: WorkModel | null | undefined, wee
   return Math.round(hoursForWeekday(model, weekday) * 60);
 }
 
+/**
+ * Tagessoll in Minuten fuer ein konkretes Datum ("YYYY-MM-DD" oder Date):
+ * Wochentags-Soll x Faktor (Feiertag 0, z. B. 24.12. 50 %, sonst 100 %).
+ */
+export function targetMinutesForDate(
+  model: WorkModel | null | undefined,
+  date: string | Date
+) {
+  const d = typeof date === "string" ? parseDateKey(date) : date;
+  if (!d) return 0;
+  return Math.round(
+    hoursForWeekday(model, d.getDay()) * 60 * dayTargetFactor(dayKey(d))
+  );
+}
+
 /** Fixer Arbeitstag laut Modell? Ohne Modell gilt Mo-Fr. */
 export function isWorkday(model: WorkModel | null | undefined, weekday: number) {
   if (!model) return fallbackIsWorkday(weekday);
@@ -120,13 +135,14 @@ export function countWorkDays(
   let count = 0;
   const d = new Date(s);
   while (d <= e) {
-    if (isVacationDay(model, d)) count++;
+    // Verkuerzte Sondertage (z. B. 24.12. mit 50 %) zaehlen anteilig.
+    if (isVacationDay(model, d)) count += dayTargetFactor(dayKey(d));
     d.setDate(d.getDate() + 1);
   }
   return count;
 }
 
-/** Sollstunden im Zeitraum laut Zeitmodell, ohne Feiertage. */
+/** Sollstunden im Zeitraum laut Zeitmodell, ohne Feiertage, Sondertage anteilig. */
 export function targetHours(model: WorkModel | null | undefined, start: string, end: string) {
   const s = parseDateKey(start) || new Date(start);
   const e = parseDateKey(end) || new Date(end);
@@ -134,7 +150,7 @@ export function targetHours(model: WorkModel | null | undefined, start: string, 
   let hours = 0;
   const d = new Date(s);
   while (d <= e) {
-    if (!isHoliday(dayKey(d))) hours += hoursForWeekday(model, d.getDay());
+    hours += hoursForWeekday(model, d.getDay()) * dayTargetFactor(dayKey(d));
     d.setDate(d.getDate() + 1);
   }
   return hours;
@@ -307,7 +323,7 @@ export function daysToMinutes(model: WorkModel | null | undefined, days: number)
 
 /**
  * Urlaubsverbrauch eines Zeitraums in Minuten: Sollstunden aller fixen
- * Arbeitstage ohne Feiertage. Mit `from`/`to` (jeweils "YYYY-MM-DD") laesst
+ * Arbeitstage ohne Feiertage; Sondertage wie der 24.12. nur anteilig. Mit `from`/`to` (jeweils "YYYY-MM-DD") laesst
  * sich auf einen Stichtagsbereich einschraenken.
  */
 export function vacationMinutes(
@@ -326,7 +342,7 @@ export function vacationMinutes(
     const key = dayKey(d);
     const inRange = (!from || key >= from) && (!to || key <= to);
     if (inRange && isVacationDay(model, d)) {
-      minutes += targetMinutesForWeekday(model, d.getDay());
+      minutes += targetMinutesForDate(model, d);
     }
     d.setDate(d.getDate() + 1);
   }

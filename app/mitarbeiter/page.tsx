@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
-import { holidayName } from "@/lib/holidays";
+import { holidayName, loadSpecialDays, shortDayLabel } from "@/lib/holidays";
 import { dayFigures } from "@/lib/time";
 import {
   WorkModel,
@@ -13,7 +13,7 @@ import {
   hoursPerWorkday,
   isWorkday,
   minutesToDays,
-  targetMinutesForWeekday,
+  targetMinutesForDate,
   vacationAccount,
   weeklyHours,
   workdayLabel,
@@ -56,6 +56,7 @@ type Row = {
   workedMin: number;
   absence: string | null;
   holiday: string | null;
+  shortDay: string | null;
 };
 
 const DAY_NAMES = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -135,6 +136,7 @@ export default function MitarbeiterPage() {
   }
 
   async function loadDetail() {
+    await loadSpecialDays(supabase);
     if (!selectedId) return;
     setLoading(true);
 
@@ -205,7 +207,8 @@ export default function MitarbeiterPage() {
         });
       }
       const fig = dayFigures(byDay[iso] || [], Date.now());
-      const targetMin = holiday ? 0 : targetMinutesForWeekday(model, wd);
+      const targetMin = holiday ? 0 : targetMinutesForDate(model, iso);
+      const shortDay = !isWeekend && !holiday ? shortDayLabel(iso) : null;
       const workedMin = Math.round(fig.workedMs / 60000);
       built.push({
         day: d,
@@ -220,6 +223,7 @@ export default function MitarbeiterPage() {
         workedMin: absence ? targetMin : workedMin,
         absence,
         holiday,
+        shortDay,
       });
     }
     setRows(built);
@@ -468,6 +472,14 @@ export default function MitarbeiterPage() {
                           {r.dateLabel}
                         </span>{" "}
                         <span className="text-slate-400">{r.dayName}</span>
+                        {r.shortDay && (
+                          <span
+                            title={r.shortDay}
+                            className="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700"
+                          >
+                            {r.shortDay}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5">{r.komm || "–"}</td>
                       <td className="px-4 py-2.5">{r.geht || "–"}</td>

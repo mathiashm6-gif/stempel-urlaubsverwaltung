@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { holidayName } from "@/lib/holidays";
+import { dayTargetFactor, loadSpecialDays } from "@/lib/holidays";
 import {
   WorkModel,
   dayKey,
@@ -15,6 +15,7 @@ import {
   workdayLabel,
 } from "@/lib/workmodel";
 import { dayFigures, isPause } from "@/lib/time";
+import { notify } from "@/lib/notify";
 
 
 type TimeEntry = {
@@ -52,6 +53,7 @@ export default function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState(dayKey(new Date()));
 
   async function loadEntries(dateValue = selectedDate) {
+    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -200,9 +202,10 @@ export default function DashboardPage() {
         );
       }
 
-      const { error } = await supabase
+      const { data: inserted, error } = await supabase
         .from("time_entries")
-        .insert([{ user_id: user.id, clock_in: new Date().toISOString() }]);
+        .insert([{ user_id: user.id, clock_in: new Date().toISOString() }])
+        .select("id");
       if (error) {
         // 23505 = unique_violation: die Datenbank lässt je Benutzer nur eine
         // offene Arbeitsbuchung zu (Index time_entries_one_open_per_user).
@@ -214,6 +217,12 @@ export default function DashboardPage() {
         await loadEntries(today);
         return;
       }
+      // Stempeln an einem freien Tag ist erlaubt und wird voll gerechnet;
+      // der Server prueft den Tag und schickt dem Admin ggf. einen Hinweis.
+      void notify(
+        "offday_work",
+        (inserted || []).map((r: { id: string }) => r.id)
+      );
       setDayEnded(false);
       setSelectedDate(today);
       await loadEntries(today);
@@ -284,8 +293,11 @@ export default function DashboardPage() {
   // Tagessoll laut Zeitmodell. Kein fixer Arbeitstag oder Feiertag -> 0.
   function targetHoursForDate(dateValue: string) {
     if (!workModel) return 0;
-    if (holidayName(dateValue)) return 0;
-    return hoursForWeekday(workModel, new Date(dateValue).getDay());
+    const d = parseDateKey(dateValue);
+    if (!d) return 0;
+    // Feiertag -> 0, verkuerzter Sondertag (z. B. 24.12.) -> anteilig.
+    const hours = hoursForWeekday(workModel, d.getDay()) * dayTargetFactor(dateValue);
+    return Math.round(hours * 100) / 100;
   }
 
   // Ist der gewaehlte Tag ein fixer Arbeitstag des Modells?

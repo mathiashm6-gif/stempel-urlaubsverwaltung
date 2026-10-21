@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
+import { notify } from "@/lib/notify";
 import {
   WEEKDAYS,
   WorkModel,
@@ -18,6 +19,11 @@ import {
   weeklyHours,
   workdayLabel,
 } from "@/lib/workmodel";
+import {
+  SpecialDay,
+  legalHolidayName,
+  setSpecialDays as setSpecialDayCache,
+} from "@/lib/holidays";
 
 type Profile = {
   id: string;
@@ -51,6 +57,25 @@ const EMPTY_MODEL: ModelForm = {
 };
 
 const YEAR_NOW = new Date().getFullYear();
+
+// Formular fuer einen Sondertag.
+type SpecialForm = {
+  day: string;
+  name: string;
+  percent: number;
+  recurring: boolean;
+};
+const EMPTY_SPECIAL: SpecialForm = {
+  day: "",
+  name: "",
+  percent: 50,
+  recurring: true,
+};
+
+function dateLabel(key: string) {
+  const [y, m, d] = key.slice(0, 10).split("-");
+  return `${d}.${m}.${y}`;
+}
 type Vacation = {
   id: number;
   user_id: string;
@@ -119,6 +144,11 @@ export default function AdminPage() {
   const [modelForm, setModelForm] = useState<ModelForm>(EMPTY_MODEL);
   const [savingModel, setSavingModel] = useState(false);
 
+  const [specialDays, setSpecialDays] = useState<SpecialDay[]>([]);
+  const [editingSpecialId, setEditingSpecialId] = useState<string | null>(null);
+  const [specialForm, setSpecialForm] = useState<SpecialForm>(EMPTY_SPECIAL);
+  const [savingSpecial, setSavingSpecial] = useState(false);
+
   async function init() {
     const {
       data: { user },
@@ -141,6 +171,7 @@ export default function AdminPage() {
       loadVacations(),
       loadWorkModels(),
       loadCorrections(),
+      loadSpecialDayRows(),
     ]);
   }
 
@@ -180,6 +211,21 @@ export default function AdminPage() {
     setWorkModels((data || []) as WorkModel[]);
   }
 
+  async function loadSpecialDayRows() {
+    const { data, error } = await supabase
+      .from("special_days")
+      .select("*")
+      .order("day");
+    if (error) {
+      // Tabelle fehlt, solange supabase/sondertage.sql nicht ausgefuehrt ist.
+      console.warn("Sondertage:", error.message);
+      return;
+    }
+    const rows = (data || []) as SpecialDay[];
+    setSpecialDays(rows);
+    setSpecialDayCache(rows);
+  }
+
   async function loadCorrections() {
     const { data, error } = await supabase
       .from("time_corrections")
@@ -201,6 +247,7 @@ export default function AdminPage() {
       alert(error.message);
       return;
     }
+    void notify("vacation_decided", [id]);
     await loadVacations();
   }
 
@@ -412,6 +459,86 @@ export default function AdminPage() {
     await loadWorkModels();
   }
 
+  // ---------------- Sondertage ----------------
+
+  function startNewSpecial() {
+    setEditingSpecialId("new");
+    setSpecialForm({ ...EMPTY_SPECIAL, day: `${YEAR_NOW}-12-24`, name: "Heiliger Abend" });
+  }
+
+  function startEditSpecial(d: SpecialDay) {
+    setEditingSpecialId(d.id);
+    setSpecialForm({
+      day: d.day.slice(0, 10),
+      name: d.name,
+      percent: Number(d.target_percent),
+      recurring: !!d.recurring,
+    });
+  }
+
+  async function saveSpecial() {
+    const name = specialForm.name.trim();
+    if (!specialForm.day) {
+      alert("Bitte ein Datum wählen.");
+      return;
+    }
+    if (!name) {
+      alert("Bitte eine Bezeichnung eingeben.");
+      return;
+    }
+    const percent = Math.round(Number(specialForm.percent));
+    if (!(percent >= 0 && percent <= 100)) {
+      alert("Das Soll muss zwischen 0 und 100 % liegen.");
+      return;
+    }
+    const legal = legalHolidayName(specialForm.day);
+    if (legal) {
+      alert(`Der ${dateLabel(specialForm.day)} ist bereits gesetzlicher Feiertag (${legal}).`);
+      return;
+    }
+    setSavingSpecial(true);
+    const payload = {
+      day: specialForm.day,
+      name,
+      target_percent: percent,
+      recurring: specialForm.recurring,
+    };
+    const { error } =
+      editingSpecialId === "new"
+        ? await supabase.from("special_days").insert([payload])
+        : await supabase
+            .from("special_days")
+            .update(payload)
+            .eq("id", editingSpecialId as string);
+    setSavingSpecial(false);
+    if (error) {
+      alert(
+        error.code === "23505"
+          ? "Für dieses Datum gibt es bereits einen Sondertag."
+          : error.message
+      );
+      return;
+    }
+    setEditingSpecialId(null);
+    await loadSpecialDayRows();
+  }
+
+  async function deleteSpecial(d: SpecialDay) {
+    if (!confirm(`Sondertag "${d.name}" (${dateLabel(d.day)}) wirklich löschen?`)) return;
+    const { error } = await supabase.from("special_days").delete().eq("id", d.id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    await loadSpecialDayRows();
+  }
+
+  function specialEffect(percent: number) {
+    if (percent <= 0) return "ganzer Tag frei (wie Feiertag)";
+    if (percent >= 100) return "nur Markierung, volles Soll";
+    return `${percent} % des Tagessolls`;
+  }
+
   async function approveCorrection(c: Correction) {
     if (c.kind === "create") {
       const { error } = await supabase.from("time_entries").insert([
@@ -456,6 +583,7 @@ export default function AdminPage() {
       alert(statusError.message);
       return;
     }
+    void notify("correction_decided", [c.id]);
     await loadCorrections();
   }
 
@@ -468,6 +596,7 @@ export default function AdminPage() {
       alert(error.message);
       return;
     }
+    void notify("correction_decided", [c.id]);
     await loadCorrections();
   }
 
@@ -968,6 +1097,186 @@ export default function AdminPage() {
             </button>
             <button
               onClick={() => setEditingModelId(null)}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sondertage */}
+      <div className="mt-8 mb-3 flex items-center justify-between">
+        <div>
+          <h2 className="text-[15px] font-semibold text-slate-900">
+            Sondertage
+          </h2>
+          <p className="text-xs text-slate-500">
+            Verkürzte oder freie Tage laut KV, z. B. 24. und 31.12. Die
+            ausfallende Zeit ist bezahlt: das Tagessoll sinkt, ein Urlaubstag
+            verbraucht nur das verkürzte Soll.
+          </p>
+        </div>
+        <button
+          onClick={startNewSpecial}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+        >
+          <Icon name="check" className="h-3.5 w-3.5" />
+          Neuer Sondertag
+        </button>
+      </div>
+      <div className={cardCls}>
+        <table className="w-full text-sm">
+          <thead className={theadCls}>
+            <tr>
+              <th className="px-4 py-2.5">Datum</th>
+              <th className="px-4 py-2.5">Bezeichnung</th>
+              <th className="px-4 py-2.5 text-right">Soll</th>
+              <th className="px-4 py-2.5">Wirkung</th>
+              <th className="px-4 py-2.5">Wiederholung</th>
+              <th className="px-4 py-2.5 text-right">Aktion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {specialDays.map((d) => (
+              <tr key={d.id} className="border-t border-slate-100">
+                <td className="px-4 py-2.5 font-medium tabular-nums text-slate-700">
+                  {d.recurring ? dateLabel(d.day).slice(0, 6) : dateLabel(d.day)}
+                </td>
+                <td className="px-4 py-2.5 text-slate-700">{d.name}</td>
+                <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-800">
+                  {d.target_percent} %
+                </td>
+                <td className="px-4 py-2.5 text-slate-600">
+                  {specialEffect(Number(d.target_percent))}
+                </td>
+                <td className="px-4 py-2.5 text-slate-600">
+                  {d.recurring
+                    ? `jährlich ab ${d.day.slice(0, 4)}`
+                    : "einmalig"}
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => startEditSpecial(d)}
+                      className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                    >
+                      Bearbeiten
+                    </button>
+                    <button
+                      onClick={() => deleteSpecial(d)}
+                      className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Löschen
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {specialDays.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-500">
+                  Noch keine Sondertage angelegt.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {editingSpecialId && (
+        <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-6">
+          <h3 className="mb-4 text-[15px] font-semibold text-slate-900">
+            {editingSpecialId === "new" ? "Neuer Sondertag" : "Sondertag bearbeiten"}
+          </h3>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Datum
+              </label>
+              <input
+                type="date"
+                value={specialForm.day}
+                onChange={(e) =>
+                  setSpecialForm((f) => ({ ...f, day: e.target.value }))
+                }
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Bezeichnung
+              </label>
+              <input
+                value={specialForm.name}
+                onChange={(e) =>
+                  setSpecialForm((f) => ({ ...f, name: e.target.value }))
+                }
+                placeholder="z. B. Silvester"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                Soll in % des normalen Tages
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={specialForm.percent}
+                  onChange={(e) =>
+                    setSpecialForm((f) => ({
+                      ...f,
+                      percent: Number(e.target.value),
+                    }))
+                  }
+                  className={inputCls}
+                />
+                {[50, 0].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setSpecialForm((f) => ({ ...f, percent: v }))}
+                    className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    {v === 50 ? "halber Tag" : "frei"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <label className="mt-4 flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={specialForm.recurring}
+              onChange={(e) =>
+                setSpecialForm((f) => ({ ...f, recurring: e.target.checked }))
+              }
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Jedes Jahr wiederholen (ab dem gewählten Jahr)
+          </label>
+          <p className="mt-3 text-sm text-slate-600">
+            Wirkung: {specialEffect(Number(specialForm.percent))}. Beispiel
+            8-Stunden-Tag: Soll{" "}
+            <span className="font-semibold">
+              {formatHm(Math.round(480 * Math.max(0, Math.min(100, Number(specialForm.percent) || 0)) / 100))} h
+            </span>
+            . Gilt nur an fixen Arbeitstagen laut Zeitmodell.
+          </p>
+          <div className="mt-4 flex gap-3">
+            <button
+              onClick={saveSpecial}
+              disabled={savingSpecial}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {savingSpecial ? "Wird gespeichert…" : "Speichern"}
+            </button>
+            <button
+              onClick={() => setEditingSpecialId(null)}
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               Abbrechen

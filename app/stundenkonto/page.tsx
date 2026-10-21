@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
-import { holidayName } from "@/lib/holidays";
+import { holidayName, loadSpecialDays } from "@/lib/holidays";
 import {
   WorkModel,
   isWorkday,
   parseDateKey,
-  targetMinutesForWeekday,
+  targetMinutesForDate,
 } from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
 import { netWorkedMsByDay } from "@/lib/time";
@@ -64,6 +64,7 @@ export default function StundenkontoPage() {
   const [balance, setBalance] = useState(0);
 
   async function load() {
+    await loadSpecialDays(supabase);
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -165,7 +166,7 @@ export default function StundenkontoPage() {
       const weekday = cur.getDay();
       const isWeekend = !isWorkday(model, weekday);
       const holiday = !isWeekend ? holidayName(key) : null;
-      const target = isWeekend || holiday ? 0 : targetMinutesForWeekday(model, weekday);
+      const target = isWeekend || holiday ? 0 : targetMinutesForDate(model, key);
       const worked = Math.max(0, Math.round((workedByDay[key] || 0) / 60000));
 
       let absence = false;
