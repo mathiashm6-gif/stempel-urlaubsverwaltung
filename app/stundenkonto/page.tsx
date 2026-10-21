@@ -108,7 +108,7 @@ export default function StundenkontoPage() {
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
             <Icon name="download" className="h-4 w-4 text-slate-500" />
-            CSV exportieren
+            <span className="hidden sm:inline">CSV exportieren</span>
           </button>
         ) : undefined
       }
@@ -170,7 +170,8 @@ export default function StundenkontoPage() {
         </div>
       ) : (
         <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Monat</th>
@@ -213,7 +214,8 @@ export default function StundenkontoPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 

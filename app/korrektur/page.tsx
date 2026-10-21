@@ -338,7 +338,8 @@ export default function KorrekturPage() {
             nachtragen.
           </p>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Kommt</th>
@@ -359,7 +360,7 @@ export default function KorrekturPage() {
                   </td>
                   <td className="px-4 py-2.5">{timeLabel(e.clock_out)}</td>
                   <td className="px-4 py-2.5">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex justify-end gap-2 whitespace-nowrap">
                       <button
                         onClick={() => startEdit(e)}
                         className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
@@ -377,7 +378,8 @@ export default function KorrekturPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         )}
       </div>
 
@@ -517,7 +519,8 @@ export default function KorrekturPage() {
         {/* Segment-Liste */}
         {segments.length > 0 && (
           <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="px-4 py-2">Art</th>
@@ -558,7 +561,8 @@ export default function KorrekturPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
             <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-[12.5px] text-slate-600">
               <span>
                 Arbeit: <b className="text-slate-800">{fmtMin(totalWork)}</b>
@@ -616,7 +620,8 @@ export default function KorrekturPage() {
             Noch keine Korrekturanträge gestellt.
           </p>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Datum</th>
@@ -665,7 +670,8 @@ export default function KorrekturPage() {
                 );
               })}
             </tbody>
-          </table>
+            </table>
+          </div>
         )}
       </div>
     </Shell>

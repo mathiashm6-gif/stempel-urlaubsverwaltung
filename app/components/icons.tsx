@@ -60,6 +60,7 @@ const PATHS: Record<string, ReactNode> = {
   check: <path d="M20 6.5 9.5 17 4 11.5" />,
   x: <path d="M17.5 6.5 6.5 17.5M6.5 6.5l11 11" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   download: (
     <>
       <path d="M12 3.5v11M7.5 10l4.5 4.5L16.5 10" />

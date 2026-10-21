@@ -37,7 +37,15 @@ const ADMIN_NAV: NavSection = {
   ],
 };
 
-export default function Sidebar({ role }: { role?: string }) {
+export default function Sidebar({
+  role,
+  variant = "desktop",
+  onNavigate,
+}: {
+  role?: string;
+  variant?: "desktop" | "mobile";
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -49,7 +57,13 @@ export default function Sidebar({ role }: { role?: string }) {
   }
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-64 flex-shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
+    <aside
+      className={
+        variant === "mobile"
+          ? "flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-xl"
+          : "sticky top-0 hidden h-screen w-64 flex-shrink-0 flex-col border-r border-slate-200 bg-white md:flex"
+      }
+    >
       <div className="flex items-center gap-3 px-5 py-5">
         <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-blue-600 text-white shadow-sm shadow-blue-600/30">
           <Icon name="clock" className="h-5 w-5" strokeWidth={2} />
@@ -74,6 +88,7 @@ export default function Sidebar({ role }: { role?: string }) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={onNavigate}
                   className={`mb-0.5 flex items-center gap-3 rounded-[9px] px-3 py-2 text-[13.5px] font-medium transition ${
                     active
                       ? "bg-blue-50 text-blue-700"

@@ -259,7 +259,8 @@ export default function TeamPage() {
         <p className="mt-4 text-sm text-slate-500">Team wird geladen…</p>
       ) : (
         <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Mitarbeiter</th>
@@ -338,7 +339,8 @@ export default function TeamPage() {
                 </tr>
               )}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 

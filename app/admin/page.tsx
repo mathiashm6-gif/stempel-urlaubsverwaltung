@@ -682,11 +682,11 @@ export default function AdminPage() {
             Mitarbeiter
           </h2>
         </div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
-              <th className="px-4 py-2.5">Name</th>
-              <th className="px-4 py-2.5">E-Mail</th>
+              <th className="px-4 py-2.5">Name / E-Mail</th>
               <th className="px-4 py-2.5">Rolle</th>
               <th className="px-4 py-2.5 text-right">Urlaub {YEAR_NOW}</th>
               <th className="px-4 py-2.5 text-right">Startsalden</th>
@@ -699,14 +699,18 @@ export default function AdminPage() {
           <tbody>
             {profiles.map((p) => (
               <tr key={p.id} className="border-t border-slate-100">
-                <td className="px-4 py-2.5 font-medium text-slate-700">
-                  {p.full_name || "–"}
+                <td className="px-4 py-2.5">
+                  <span className="block font-medium text-slate-700">
+                    {p.full_name || "–"}
+                  </span>
+                  <span className="block break-all text-xs text-slate-500">
+                    {p.email}
+                  </span>
                 </td>
-                <td className="px-4 py-2.5 text-slate-600">{p.email}</td>
                 <td className="px-4 py-2.5">
                   {p.role === "admin" ? (
-                    <span className="rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
-                      Chef / Admin
+                    <span className="whitespace-nowrap rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                      Admin
                     </span>
                   ) : (
                     <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
@@ -742,8 +746,11 @@ export default function AdminPage() {
                       p.vacation_opening_date || p.opening_balance_date || null;
                     return (
                       <>
-                        <span className="whitespace-nowrap">
-                          ZA {formatHm(za)} · Urlaub {formatHm(ur)}
+                        <span className="block whitespace-nowrap">
+                          ZA {formatHm(za)}
+                        </span>
+                        <span className="block whitespace-nowrap">
+                          Urlaub {formatHm(ur)}
                         </span>
                         {stichtag && (
                           <span className="block text-xs text-slate-400">
@@ -757,7 +764,7 @@ export default function AdminPage() {
                 <td className="px-4 py-2.5 text-slate-600">
                   {workModelName(p.work_model_id)}
                 </td>
-                <td className="px-4 py-2.5 text-slate-600">
+                <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">
                   {p.entry_date
                     ? new Date(p.entry_date).toLocaleDateString("de-DE")
                     : "–"}
@@ -774,7 +781,7 @@ export default function AdminPage() {
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-2 whitespace-nowrap">
                     {p.active !== false ? (
                       <button
                         onClick={() => toggleActive(p)}
@@ -801,7 +808,8 @@ export default function AdminPage() {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {editingProfile && (
@@ -1029,7 +1037,8 @@ export default function AdminPage() {
         </button>
       </div>
       <div className={cardCls}>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
               <th className="px-4 py-2.5">Name</th>
@@ -1073,7 +1082,7 @@ export default function AdminPage() {
                   {profiles.filter((p) => p.work_model_id === m.id).length}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-2 whitespace-nowrap">
                     <button
                       onClick={() => startEditModel(m)}
                       className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
@@ -1098,7 +1107,8 @@ export default function AdminPage() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {editingModelId && (
@@ -1222,7 +1232,8 @@ export default function AdminPage() {
         </button>
       </div>
       <div className={cardCls}>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
               <th className="px-4 py-2.5">Datum</th>
@@ -1252,7 +1263,7 @@ export default function AdminPage() {
                     : "einmalig"}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-2 whitespace-nowrap">
                     <button
                       onClick={() => startEditSpecial(d)}
                       className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700"
@@ -1277,7 +1288,8 @@ export default function AdminPage() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {editingSpecialId && (
@@ -1386,7 +1398,8 @@ export default function AdminPage() {
         Offene Abwesenheitsanträge
       </h2>
       <div className={cardCls}>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
               <th className="px-4 py-2.5">Mitarbeiter</th>
@@ -1412,7 +1425,7 @@ export default function AdminPage() {
                   {new Date(v.end_date).toLocaleDateString("de-DE")}
                 </td>
                 <td className="px-4 py-2.5">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-2 whitespace-nowrap">
                     <button
                       onClick={() => updateStatus(v.id, "approved")}
                       className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
@@ -1437,7 +1450,8 @@ export default function AdminPage() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {/* Offene Zeitkorrekturen */}
@@ -1445,7 +1459,8 @@ export default function AdminPage() {
         Offene Zeitkorrekturen
       </h2>
       <div className={cardCls}>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
               <th className="px-4 py-2.5">Mitarbeiter</th>
@@ -1482,7 +1497,7 @@ export default function AdminPage() {
                 </td>
                 <td className="px-4 py-2.5 text-slate-500">{c.reason || "–"}</td>
                 <td className="px-4 py-2.5">
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-2 whitespace-nowrap">
                     <button
                       onClick={() => approveCorrection(c)}
                       className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
@@ -1507,7 +1522,8 @@ export default function AdminPage() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {/* Bearbeitete Anträge */}
@@ -1515,7 +1531,8 @@ export default function AdminPage() {
         Bearbeitete Anträge und Krankmeldungen
       </h2>
       <div className={cardCls}>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className={theadCls}>
             <tr>
               <th className="px-4 py-2.5">Mitarbeiter</th>
@@ -1574,7 +1591,8 @@ export default function AdminPage() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </Shell>
   );

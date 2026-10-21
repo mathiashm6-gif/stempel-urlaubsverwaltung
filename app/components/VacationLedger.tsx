@@ -41,6 +41,7 @@ export default function VacationLedger({
           Verbraucht wird immer der älteste Anspruch zuerst.
         </p>
       </div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
           <tr>
@@ -83,6 +84,7 @@ export default function VacationLedger({
           })}
         </tbody>
       </table>
+      </div>
       <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-400">
         Hinweis: Urlaub verjährt zwei Jahre nach Ende des Urlaubsjahres (§ 4 UrlG),
         aber nur, wenn rechtzeitig darauf hingewiesen wurde. Das Tool bucht nichts

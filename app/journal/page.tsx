@@ -329,7 +329,8 @@ export default function JournalPage() {
               {MONTH_NAMES[month]} {year}
             </h2>
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2.5">Datum</th>
@@ -458,7 +459,8 @@ export default function JournalPage() {
                 </td>
               </tr>
             </tfoot>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
