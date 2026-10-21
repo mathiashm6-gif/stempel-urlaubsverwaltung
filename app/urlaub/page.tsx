@@ -7,6 +7,7 @@ import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { loadSpecialDays } from "@/lib/holidays";
 import { notify } from "@/lib/notify";
+import { SICK_TYPE, checkSickNote, openSickNote, uploadSickNote } from "@/lib/sicknotes";
 import VacationLedger from "../components/VacationLedger";
 import {
   WorkModel,
@@ -29,6 +30,7 @@ type VacationRequest = {
   end_date: string;
   status: string;
   type?: string | null;
+  attachment_path?: string | null;
 };
 
 const TODAY = new Date();
@@ -62,6 +64,11 @@ export default function UrlaubPage() {
   const [endDate, setEndDate] = useState("");
   const [requests, setRequests] = useState<VacationRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  // Krankmeldung: Pflicht-PDF (Arbeitsunfaehigkeitsbestaetigung)
+  const [sickFile, setSickFile] = useState<File | null>(null);
+  const [fileKey, setFileKey] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const isSick = type === SICK_TYPE;
 
   // Ein Urlaubstag ist ein fixer Arbeitstag des Zeitmodells; verbraucht
   // werden die Sollstunden dieses Wochentags.
@@ -120,6 +127,7 @@ export default function UrlaubPage() {
   }
 
   async function handleSubmit() {
+    if (submitting) return;
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -132,30 +140,58 @@ export default function UrlaubPage() {
       alert("Das Enddatum darf nicht vor dem Startdatum liegen.");
       return;
     }
-    const { data: inserted, error } = await supabase
-      .from("vacation_requests")
-      .insert([
-        {
-          user_id: user.id,
-          type,
-          start_date: startDate,
-          end_date: endDate,
-          status: "pending",
-        },
-      ])
-      .select("id");
-    if (error) {
-      alert(error.message);
-      return;
+    if (isSick) {
+      const problem = checkSickNote(sickFile);
+      if (problem) {
+        alert(problem);
+        return;
+      }
     }
-    void notify(
-      "vacation_requested",
-      (inserted || []).map((r: { id: number }) => r.id)
-    );
-    setType("Urlaub");
-    setStartDate("");
-    setEndDate("");
-    await loadData();
+
+    setSubmitting(true);
+    try {
+      // Krankmeldung: erst das PDF hochladen, dann die Meldung anlegen. Die
+      // Datenbank laesst eine sofort gueltige Krankmeldung nur mit einem
+      // tatsaechlich hochgeladenen PDF im eigenen Ordner zu.
+      let attachmentPath: string | null = null;
+      if (isSick && sickFile) {
+        try {
+          attachmentPath = await uploadSickNote(user.id, sickFile);
+        } catch (err) {
+          alert(`Das PDF konnte nicht hochgeladen werden: ${(err as Error).message}`);
+          return;
+        }
+      }
+
+      const { data: inserted, error } = await supabase
+        .from("vacation_requests")
+        .insert([
+          {
+            user_id: user.id,
+            type,
+            start_date: startDate,
+            end_date: endDate,
+            status: isSick ? "approved" : "pending",
+            ...(attachmentPath ? { attachment_path: attachmentPath } : {}),
+          },
+        ])
+        .select("id");
+      if (error) {
+        alert(error.message);
+        return;
+      }
+      const ids = (inserted || []).map((r: { id: number }) => r.id);
+      void notify(isSick ? "sick_reported" : "vacation_requested", ids);
+      if (isSick) alert("Krankmeldung ist eingegangen. Gute Besserung!");
+      setType("Urlaub");
+      setStartDate("");
+      setEndDate("");
+      setSickFile(null);
+      setFileKey((k) => k + 1);
+      await loadData();
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   useEffect(() => {
@@ -309,7 +345,7 @@ export default function UrlaubPage() {
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-[15px] font-semibold text-slate-900">
-            Neue Abwesenheit beantragen
+            {isSick ? "Krank melden" : "Neue Abwesenheit beantragen"}
           </h2>
           <div className="space-y-3.5">
             <div>
@@ -352,6 +388,25 @@ export default function UrlaubPage() {
                 />
               </div>
             </div>
+            {isSick && (
+              <div>
+                <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                  Krankmeldung (PDF) <span className="text-red-600">*</span>
+                </label>
+                <input
+                  key={fileKey}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={(e) => setSickFile(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                />
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Gilt sofort, ohne Genehmigung. Pflicht: Arbeitsunfähigkeitsbestätigung
+                  als PDF (max. 10 MB). Zeitraum laut Bestätigung; bei Verlängerung bitte
+                  eine neue Krankmeldung mit der neuen Bestätigung abgeben.
+                </p>
+              </div>
+            )}
             {startDate && endDate && endDate >= startDate && (
               <p className="text-sm text-slate-500">
                 Das entspricht{" "}
@@ -364,10 +419,15 @@ export default function UrlaubPage() {
             )}
             <button
               onClick={handleSubmit}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              disabled={submitting || (isSick && !sickFile)}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="check" className="h-4 w-4" />
-              Antrag absenden
+              {submitting
+                ? "Wird gesendet…"
+                : isSick
+                ? "Krankmeldung absenden"
+                : "Antrag absenden"}
             </button>
           </div>
         </div>
@@ -396,11 +456,23 @@ export default function UrlaubPage() {
               </thead>
               <tbody>
                 {requests.map((r) => {
-                  const label = statusLabel(r.status);
+                  const label =
+                    r.type === SICK_TYPE && r.status === "approved"
+                      ? { text: "Gemeldet", cls: "bg-slate-100 text-slate-700" }
+                      : statusLabel(r.status);
                   return (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="px-4 py-2.5 font-medium text-slate-700">
                         {r.type || "Urlaub"}
+                        {r.attachment_path && (
+                          <button
+                            type="button"
+                            onClick={() => openSickNote(r.attachment_path as string)}
+                            className="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                          >
+                            PDF
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-slate-600">
                         {new Date(r.start_date).toLocaleDateString("de-DE")} –{" "}

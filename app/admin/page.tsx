@@ -7,6 +7,7 @@ import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { notify } from "@/lib/notify";
 import { loadAccounts } from "@/lib/accounts";
+import { SICK_TYPE, openSickNote } from "@/lib/sicknotes";
 import {
   WEEKDAYS,
   WorkModel,
@@ -86,6 +87,7 @@ type Vacation = {
   end_date: string;
   status: string;
   type?: string | null;
+  attachment_path?: string | null;
 };
 type Correction = {
   id: number;
@@ -1510,7 +1512,7 @@ export default function AdminPage() {
 
       {/* Bearbeitete Anträge */}
       <h2 className="mt-8 mb-3 text-[15px] font-semibold text-slate-900">
-        Bearbeitete Abwesenheitsanträge
+        Bearbeitete Anträge und Krankmeldungen
       </h2>
       <div className={cardCls}>
         <table className="w-full text-sm">
@@ -1531,6 +1533,15 @@ export default function AdminPage() {
                 </td>
                 <td className="px-4 py-2.5 font-medium text-slate-700">
                   {v.type || "Urlaub"}
+                  {v.attachment_path && (
+                    <button
+                      type="button"
+                      onClick={() => openSickNote(v.attachment_path as string)}
+                      className="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                    >
+                      PDF
+                    </button>
+                  )}
                 </td>
                 <td className="px-4 py-2.5">
                   {new Date(v.start_date).toLocaleDateString("de-DE")}
@@ -1539,7 +1550,11 @@ export default function AdminPage() {
                   {new Date(v.end_date).toLocaleDateString("de-DE")}
                 </td>
                 <td className="px-4 py-2.5">
-                  {v.status === "approved" ? (
+                  {v.type === SICK_TYPE && v.status === "approved" ? (
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                      Gemeldet
+                    </span>
+                  ) : v.status === "approved" ? (
                     <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                       Genehmigt
                     </span>

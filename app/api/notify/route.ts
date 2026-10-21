@@ -5,6 +5,8 @@
 //   vacation_decided     Admin genehmigt / lehnt ab         -> MA
 //   correction_requested MA beantragt Zeitkorrektur         -> Admin
 //   correction_decided   Admin genehmigt / lehnt Korrektur  -> MA
+//   sick_reported        MA meldet sich krank (gilt sofort) -> Admin, mit dem
+//                        hochgeladenen PDF als Anhang
 //   offday_work          MA stempelt an einem Tag, der laut Zeitmodell kein
 //                        Arbeitstag ist (oder an einem Feiertag) -> Admin.
 //                        Die Zeit wird trotzdem voll gerechnet; die Mail ist
@@ -43,7 +45,8 @@ type NotifyEvent =
   | "vacation_decided"
   | "correction_requested"
   | "correction_decided"
-  | "offday_work";
+  | "offday_work"
+  | "sick_reported";
 
 const EVENTS: NotifyEvent[] = [
   "vacation_requested",
@@ -51,6 +54,7 @@ const EVENTS: NotifyEvent[] = [
   "correction_requested",
   "correction_decided",
   "offday_work",
+  "sick_reported",
 ];
 
 type Profile = {
@@ -98,6 +102,7 @@ type Vacation = {
   end_date: string;
   status: string;
   type: string | null;
+  attachment_path?: string | null;
 };
 
 type Correction = {
@@ -112,7 +117,13 @@ type Correction = {
   status: string;
 };
 
-type Mail = { to: string[]; subject: string; lines: string[]; link: string };
+type Mail = {
+  to: string[];
+  subject: string;
+  lines: string[];
+  link: string;
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
+};
 
 const KIND_LABEL: Record<string, string> = {
   create: "Nachtragen",
@@ -210,7 +221,14 @@ ${mail.lines.map((l) => (l ? `<p style="margin:0 0 8px">${escapeHtml(l)}</p>` : 
 <p style="margin:16px 0"><a href="${escapeHtml(mail.link)}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600">Zur Zeiterfassung</a></p>
 <p style="margin:0;color:#94a3b8;font-size:12px">Diese Nachricht wurde automatisch von der Zeiterfassung verschickt.</p>
 </div>`;
-  await mailer.sendMail({ from, to: mail.to, subject: mail.subject, text, html });
+  await mailer.sendMail({
+    from,
+    to: mail.to,
+    subject: mail.subject,
+    text,
+    html,
+    attachments: mail.attachments,
+  });
 }
 
 async function loadProfiles(db: SupabaseClient, ids: string[]) {
@@ -260,7 +278,46 @@ export async function POST(request: Request) {
   const link = appUrl();
   const mails: Mail[] = [];
 
-  if (event === "offday_work") {
+  if (event === "sick_reported") {
+    const to = adminRecipients();
+    if (!to.length) return json({ ok: false, skipped: "NOTIFY_ADMIN_EMAILS fehlt" });
+    const { data } = await db
+      .from("vacation_requests")
+      .select("*")
+      .in("id", ids)
+      .eq("user_id", user.id)
+      .eq("type", "Krankheit");
+    const rows = (data || []) as Vacation[];
+    if (!rows.length) return json({ ok: false, error: "Keine Krankmeldung gefunden" }, 404);
+
+    // PDF mit dem Token des Mitarbeiters laden (er darf seinen Ordner lesen).
+    const attachments: NonNullable<Mail["attachments"]> = [];
+    for (const v of rows) {
+      if (!v.attachment_path) continue;
+      const { data: file } = await db.storage.from("sick-notes").download(v.attachment_path);
+      if (!file) continue;
+      const safeName = personName(me).replace(/[^A-Za-z0-9ÄÖÜäöüß_-]+/g, "_");
+      attachments.push({
+        filename: `Krankmeldung_${safeName}_${v.start_date}.pdf`,
+        content: Buffer.from(await file.arrayBuffer()),
+        contentType: "application/pdf",
+      });
+    }
+    mails.push({
+      to,
+      subject: `Krankmeldung: ${personName(me)} ${rows.map(periodLabel).join(", ")}`,
+      lines: [
+        `${personName(me)} hat sich krank gemeldet:`,
+        ...rows.map((v) => `Krankenstand ${periodLabel(v)}`),
+        attachments.length
+          ? "Die Arbeitsunfähigkeitsbestätigung liegt als PDF bei."
+          : "Achtung: das PDF konnte nicht angehängt werden, bitte in der Verwaltung öffnen.",
+        "Die Krankmeldung ist ohne Genehmigung gültig.",
+      ],
+      link: `${link}/admin`,
+      attachments,
+    });
+  } else if (event === "offday_work") {
     const to = adminRecipients();
     if (!to.length) return json({ ok: false, skipped: "NOTIFY_ADMIN_EMAILS fehlt" });
 

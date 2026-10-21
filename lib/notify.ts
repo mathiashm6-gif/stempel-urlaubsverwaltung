@@ -11,7 +11,8 @@ export type NotifyEvent =
   | "vacation_decided"
   | "correction_requested"
   | "correction_decided"
-  | "offday_work";
+  | "offday_work"
+  | "sick_reported";
 
 export async function notify(event: NotifyEvent, ids: (string | number)[]) {
   try {

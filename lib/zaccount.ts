@@ -5,7 +5,7 @@
 //
 // Kontobeginn ist die erste Buchung, bei gesetztem Stichtag fruehestens der
 // Stichtag (der Zeitraum davor steckt im Startsaldo). Abwesenheitstage
-// (genehmigter Urlaub, Krankenstand ...) sind neutral. Arbeit an Tagen, die
+// (genehmigter Urlaub, Krankenstand ...) sind neutral, ausser Zeitausgleich. Arbeit an Tagen, die
 // laut Zeitmodell frei sind, zaehlt voll (Soll 0).
 
 import { holidayName } from "./holidays";
@@ -17,6 +17,17 @@ import {
   parseDateKey,
   targetMinutesForDate,
 } from "./workmodel";
+
+/**
+ * Abwesenheitsart "Zeitausgleich": der Tag wird aus dem ZA-Konto genommen,
+ * also NICHT neutral – Soll zaehlt, Ist ist 0, das Konto sinkt um das Tagessoll.
+ * Alle anderen Abwesenheiten (Urlaub, Krankheit, Arzt, Sonderurlaub) sind neutral.
+ */
+export const ZA_ABSENCE_TYPE = "Zeitausgleich";
+
+export function absenceIsNeutral(type?: string | null) {
+  return (type || "Urlaub") !== ZA_ABSENCE_TYPE;
+}
 
 export type ZaEntry = {
   id: string;
@@ -30,6 +41,7 @@ export type ZaAbsence = {
   start_date: string;
   end_date: string;
   status: string;
+  type?: string | null;
 };
 
 export type ZaMonth = {
@@ -112,7 +124,9 @@ export function zaAccount(input: {
     const absent =
       !isOff &&
       !holiday &&
-      absences.some((a) => key >= a.start_date && key <= a.end_date);
+      absences.some(
+        (a) => key >= a.start_date && key <= a.end_date && absenceIsNeutral(a.type)
+      );
 
     months[mKey].ist += worked;
     months[mKey].soll += target;

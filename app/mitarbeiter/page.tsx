@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { absenceIsNeutral } from "@/lib/zaccount";
 import Shell from "../components/Shell";
 import { holidayName, loadSpecialDays, shortDayLabel } from "@/lib/holidays";
 import { dayFigures } from "@/lib/time";
@@ -226,7 +227,7 @@ export default function MitarbeiterPage() {
         geht: fig.geht ? timeLabel(fig.geht) : "",
         pauseMin: Math.round(fig.pauseMs / 60000),
         targetMin,
-        workedMin: absence ? targetMin : workedMin,
+        workedMin: absence && absenceIsNeutral(absence) ? targetMin : workedMin,
         absence,
         holiday,
         shortDay,
@@ -496,7 +497,10 @@ export default function MitarbeiterPage() {
                 {rows.map((r) => {
                   const diff = r.workedMin - r.targetMin;
                   const showDiff =
-                    !r.isWeekend && !r.isFuture && !r.absence && !r.holiday;
+                    !r.isWeekend &&
+                    !r.isFuture &&
+                    !(r.absence && absenceIsNeutral(r.absence)) &&
+                    !r.holiday;
                   return (
                     <tr
                       key={r.day}

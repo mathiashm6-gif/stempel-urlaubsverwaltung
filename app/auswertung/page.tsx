@@ -12,6 +12,7 @@ import {
   targetMinutesForDate,
 } from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
+import { absenceIsNeutral } from "@/lib/zaccount";
 import { netWorkedMsByDay } from "@/lib/time";
 
 type TimeEntry = {
@@ -26,6 +27,7 @@ type VacationRequest = {
   start_date: string;
   end_date: string;
   status: string;
+  type?: string | null;
 };
 type Totals = {
   sollToDate: number;
@@ -153,7 +155,7 @@ export default function AuswertungPage() {
       if (!holiday) {
         vacations.forEach((v) => {
           if (key >= v.start_date && key <= v.end_date && !isWeekend)
-            absence = true;
+            if (absenceIsNeutral(v.type)) absence = true;
         });
       }
 

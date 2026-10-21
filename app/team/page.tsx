@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { absenceIsNeutral } from "@/lib/zaccount";
 import Shell from "../components/Shell";
 import { Icon } from "../components/icons";
 import { holidayName, loadSpecialDays } from "@/lib/holidays";
@@ -34,6 +35,7 @@ type VacationRequest = {
   start_date: string;
   end_date: string;
   status: string;
+  type?: string | null;
 };
 type TeamRow = {
   id: string;
@@ -165,7 +167,7 @@ export default function TeamPage() {
         if (!holiday) {
           userVac.forEach((v) => {
             if (key >= v.start_date && key <= v.end_date && !isWeekend)
-              absence = true;
+              if (absenceIsNeutral(v.type)) absence = true;
           });
         }
         if (absence) continue;

@@ -12,6 +12,7 @@ import {
   targetMinutesForDate,
 } from "@/lib/workmodel";
 import { downloadCsv } from "@/lib/csv";
+import { absenceIsNeutral } from "@/lib/zaccount";
 import { dayFigures } from "@/lib/time";
 
 type TimeEntry = {
@@ -196,7 +197,7 @@ export default function JournalPage() {
         pauseMin: Math.round(fig.pauseMs / 60000),
         autoPauseMin: Math.round(fig.autoPauseMs / 60000),
         targetMin,
-        workedMin: absence ? targetMin : workedMin,
+        workedMin: absence && absenceIsNeutral(absence) ? targetMin : workedMin,
         running: fig.running,
         absence,
         holiday,
@@ -233,7 +234,10 @@ export default function JournalPage() {
     ];
     const dataRows = rows.map((r) => {
       const diff = r.workedMin - r.targetMin;
-      const showDiff = !r.isWeekend && !r.isFuture && !r.absence && !r.holiday;
+      const showDiff = !r.isWeekend &&
+                    !r.isFuture &&
+                    !(r.absence && absenceIsNeutral(r.absence)) &&
+                    !r.holiday;
       const hinweis = r.holiday
         ? `Feiertag (${r.holiday})`
         : r.absence
@@ -341,7 +345,10 @@ export default function JournalPage() {
               {rows.map((r) => {
                 const diff = r.workedMin - r.targetMin;
                 const showDiff =
-                  !r.isWeekend && !r.isFuture && !r.absence && !r.holiday;
+                  !r.isWeekend &&
+                    !r.isFuture &&
+                    !(r.absence && absenceIsNeutral(r.absence)) &&
+                    !r.holiday;
                 return (
                   <tr
                     key={r.day}
